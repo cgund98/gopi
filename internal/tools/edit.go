@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cgund98/gogent"
+	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
 )
@@ -22,6 +23,7 @@ type editFileArgs struct {
 type EditFile struct {
 	Root      workspace.Root
 	Workspace trust.Workspace
+	Rules     policy.Rules
 }
 
 func (t *EditFile) Name() string { return "edit_file" }
@@ -32,7 +34,9 @@ func (t *EditFile) Description() string {
 
 func (t *EditFile) Parameters() json.RawMessage { return schemaFor(new(editFileArgs)) }
 
-func (t *EditFile) RequiresApproval() bool { return false }
+func (t *EditFile) RequiresApproval(context.Context, json.RawMessage) (gogent.ApprovalDecision, error) {
+	return gogent.ApprovalDecision{}, nil
+}
 
 func (t *EditFile) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var args editFileArgs
@@ -45,6 +49,9 @@ func (t *EditFile) Execute(_ context.Context, raw json.RawMessage) (json.RawMess
 	resolved, err := t.Root.Resolve(args.Path)
 	if err != nil {
 		return accessDenied(args.Path, err.Error()), nil
+	}
+	if rule, ok := t.Rules.MatchWrite(resolved); ok {
+		return accessDenied(args.Path, "protected path "+rule), nil
 	}
 
 	existing, err := os.ReadFile(resolved)

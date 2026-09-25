@@ -40,6 +40,70 @@ func TestShellRejectsWiderProfileAndOutsideCwd(t *testing.T) {
 	}
 }
 
+func TestShellExtraPathsRequireApproval(t *testing.T) {
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, ".env"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tool := &Shell{Root: root, HomeDir: t.TempDir()}
+	decision, err := tool.RequiresApproval(context.Background(), json.RawMessage(`{"command":"cat .env","read_paths":[".env"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required || !strings.Contains(decision.Reason, "Elevated file access") || !strings.Contains(decision.Reason, ".env") {
+		t.Fatalf("decision = %#v", decision)
+	}
+	plain, err := tool.RequiresApproval(context.Background(), json.RawMessage(`{"command":"echo hi"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Required {
+		t.Fatalf("plain shell should not pause: %#v", plain)
+	}
+}
+
+func TestShellFileDenialAsksToRetryElevated(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("sandboxed shell runs on macOS")
+	}
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, ".env"), []byte("super-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tool := &Shell{Root: root, HomeDir: t.TempDir()}
+	raw := runShell(t, tool, `cat .env`)
+	var payload struct {
+		Message      string   `json:"message"`
+		BlockedPaths []string `json:"blocked_paths"`
+		Stdout       string   `json:"stdout"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload.Message, "read_paths or write_paths") {
+		t.Fatalf("result = %s", raw)
+	}
+	if payload.Stdout != "" && strings.Contains(payload.Stdout, "super-secret") {
+		t.Fatalf("sandbox read .env: %s", raw)
+	}
+	found := false
+	for _, path := range payload.BlockedPaths {
+		if path == ".env" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("blocked paths = %#v body = %s", payload.BlockedPaths, raw)
+	}
+}
+
+func TestFileElevationIgnoresNetworkDenial(t *testing.T) {
+	hint, paths := fileElevation("", "nc: connect: Operation not permitted\n")
+	if hint != "" || paths != nil {
+		t.Fatalf("hint = %q paths = %#v", hint, paths)
+	}
+}
+
 func TestShellReturnsExitCode(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("sandboxed shell runs on macOS")

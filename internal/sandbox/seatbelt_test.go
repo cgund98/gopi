@@ -38,6 +38,20 @@ func TestSeatbeltDeniesAfterWorkspaceAllow(t *testing.T) {
 	if strings.Contains(body, "allow network") {
 		t.Fatalf("network must stay denied:\n%s", body)
 	}
+	elevated := Profile{
+		DenyRead:   []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$"},
+		ExtraReads: []string{"/work/.env"},
+		Network:    NetworkDeny,
+	}
+	elevatedBody, err := SeatbeltProfile(elevated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envDeny := strings.Index(elevatedBody, `(deny file-read* (regex "^(.*/)?\\.[eE][nN][vV](/.*)?$"))`)
+	extraAt := strings.Index(elevatedBody, `(allow file-read* (subpath "/work/.env"))`)
+	if envDeny < 0 || extraAt < 0 || envDeny >= extraAt {
+		t.Fatalf("approved extra path must follow the protected deny:\n%s", elevatedBody)
+	}
 }
 
 func TestLaunchEcho(t *testing.T) {

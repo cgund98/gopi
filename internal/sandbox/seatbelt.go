@@ -38,6 +38,13 @@ func SeatbeltProfile(profile Profile) (string, error) {
 	for _, pattern := range profile.DenyWrite {
 		writeRegex(&b, "deny file-write*", pattern)
 	}
+	for _, path := range profile.ExtraReads {
+		writeSubpath(&b, "allow file-read*", path)
+	}
+	for _, path := range profile.ExtraWrites {
+		writeSubpath(&b, "allow file-write*", path)
+		writeSubpath(&b, "allow file-read*", path)
+	}
 	b.WriteString("(deny network*)\n")
 	b.WriteString("(deny process-info* (target others))\n")
 	b.WriteString("(deny appleevent-send)\n")

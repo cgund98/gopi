@@ -112,11 +112,18 @@ func (m *chatModel) resolveSubmissionPending() (gogent.PendingToolCall, bool) {
 }
 
 func renderApprovalPrompt(pending gogent.PendingToolCall, width int) string {
+	card := toolCardView{ToolName: pending.ToolName, Args: pending.Args}
 	var b strings.Builder
-	b.WriteString(renderToolLine(pending.ToolName, toolCardPending, true))
+	b.WriteString(renderToolLine(toolHeadline(card), toolCardPending, true))
 	b.WriteString("\n\n")
-	b.WriteString(renderToolArgsBlock(pending.Args, width))
-	b.WriteByte('\n')
+	if pending.Reason != "" {
+		b.WriteString(statusStyle.Render(pending.Reason))
+		b.WriteByte('\n')
+	}
+	if body := renderApprovalBody(card, width); body != "" {
+		b.WriteString(body)
+		b.WriteByte('\n')
+	}
 	return b.String()
 }
 

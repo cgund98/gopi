@@ -117,6 +117,7 @@ A session is one workspace plus one gogent chat:
 | `read_file`, `list_dir`, `grep` | Protected path only | Host-side policy check, no shell | Read workspace files |
 | `write_file`, `edit_file` | Protected path, or a write outside the write root | Host-side policy check | Edit files |
 | `shell` | Only when `profile` is wider than the default sandbox | Profile from the arguments, secret-scrubbed | Run a command |
+| `web_search` | No | Host-side request to the configured search endpoint. No socket inside `shell` | Look up a query on the internet |
 | `delegate` | No | Child policy is a subset of the parent | Subagent |
 
 `shell` takes a `profile` argument that defaults to `sandbox` (workspace write root, protected paths denied, network `deny` or the user allowlist). A wider profile is the elevation request. There is no second tool and no boolean that disables the sandbox inside an already-approved call. Claude Code's `dangerouslyDisableSandbox` retry is the pattern this avoids: a prompt-injected model can ask for `profile: unsandboxed`, and that ask is a fresh approval card.
@@ -295,7 +296,7 @@ Elevated commands keep the scrubbed environment. Passing a secret is a second, s
 
 ## Secrets
 
-`~/.gopi/secrets/` holds credential material. Files are mode `0600`, directory `0700`. The model is never given this directory as a read root.
+`~/.gopi/secrets.toml` holds credential material. The file is mode `0600`. The model is never given this file as a read root.
 
 The broker loads secrets into the host process at startup. Consumers:
 
@@ -381,7 +382,7 @@ Skill bodies are untrusted when they come from a repository. They get no extra t
   system.md               # optional user system prompt
   AGENTS.md               # optional global instructions
   ignore                  # global ignore patterns
-  secrets/                # 0700, files 0600
+  secrets.toml            # 0600, secret name = string value
   skills/
   sessions/               # later: transcripts
   audit.log               # redacted tool-call log
@@ -490,11 +491,12 @@ Build in this order. Later milestones assume the earlier security floor is alrea
 7. **Elevation.** Wider `shell` profiles, with the approval card showing `ApprovalDecision.Reason`.
 8. **Subagents.** `delegate` with a narrower registry, depth cap, and user-facing approvals.
 9. **Interaction modes.** The TUI can switch the session among Agent, Ask, and Plan. The mode is a registry and a prompt prefix. It does not weaken the sandbox floor.
+10. **Internet search.** A `web_search` tool. The host sends the query to the search endpoint named in `~/.gopi/config.toml` and returns a short list of titles, URLs, and snippets. The sandboxed `shell` stays on `network: deny`. The tool does not fetch arbitrary URLs, does not follow redirects off the search endpoint, and truncates each result. Snippets are untrusted content, same as a file the model reads.
 
 | Mode | Tools | What the model does |
 |------|--------|---------------------|
-| Agent | Full set for the current milestone: read, search, edit, and later shell and delegate | Changes the workspace and runs commands |
-| Ask | Read-only: `read_file`, `grep`, `list_dir` | Answers questions about the workspace. `edit_file` and `shell` are not registered |
+| Agent | Full set for the current milestone: read, search, edit, and later shell, `web_search`, and delegate | Changes the workspace and runs commands |
+| Ask | Read-only: `read_file`, `grep`, `list_dir`, and later `web_search` | Answers questions about the workspace and, once search exists, the public web. `edit_file` and `shell` are not registered |
 | Plan | Same read-only set as Ask | Explores the workspace and writes a plan in the transcript. No file edits and no shell until the user switches to Agent |
 
 The active mode is shown in the composer and stored on the session, not in the repo. Switching modes starts the next user turn with the new registry and prompt. The existing transcript stays. Plan does not auto-apply when the user accepts it; applying the plan is an Agent turn the user starts explicitly.

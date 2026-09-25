@@ -20,6 +20,8 @@ type Profile struct {
 	WriteRoots  []string
 	DenyRead    []string
 	DenyWrite   []string
+	ExtraReads  []string
+	ExtraWrites []string
 	Network     string
 	Env         []string
 	Timeout     time.Duration

@@ -25,6 +25,13 @@ var FloorGlobs = []string{
 type Rules struct {
 	DenyRead  []string
 	DenyWrite []string
+	read      []compiledRule
+	write     []compiledRule
+}
+
+type compiledRule struct {
+	id string
+	re *regexp.Regexp
 }
 
 // Build unions the security floor, ~/.gopi/ignore, and repo gitignore files.
@@ -36,17 +43,21 @@ func Build(workspace, gopiHome, binaryPath string) (Rules, error) {
 		if err != nil {
 			return Rules{}, err
 		}
-		rules.DenyRead = append(rules.DenyRead, pattern)
-		rules.DenyWrite = append(rules.DenyWrite, pattern)
+		if err := rules.add(glob, pattern, true, true); err != nil {
+			return Rules{}, err
+		}
 	}
 	for _, dir := range homeProtectedDirs() {
 		pattern := "^" + foldLiteral(dir) + "(/.*)?$"
-		rules.DenyRead = append(rules.DenyRead, pattern)
-		rules.DenyWrite = append(rules.DenyWrite, pattern)
+		if err := rules.add(dir, pattern, true, true); err != nil {
+			return Rules{}, err
+		}
 	}
 	for _, path := range writeProtected(workspace, binaryPath) {
 		pattern := "^" + foldLiteral(path) + "(/.*)?$"
-		rules.DenyWrite = append(rules.DenyWrite, pattern)
+		if err := rules.add(path, pattern, false, true); err != nil {
+			return Rules{}, err
+		}
 	}
 
 	sources := []string{
@@ -67,11 +78,56 @@ func Build(workspace, gopiHome, binaryPath string) (Rules, error) {
 			if skip || pattern == "" {
 				continue
 			}
-			rules.DenyRead = append(rules.DenyRead, pattern)
-			rules.DenyWrite = append(rules.DenyWrite, pattern)
+			if err := rules.add(trimmedIgnoreID(line), pattern, true, true); err != nil {
+				return Rules{}, err
+			}
 		}
 	}
 	return rules, nil
+}
+
+func trimmedIgnoreID(line string) string {
+	id := strings.TrimSpace(line)
+	if id == "" {
+		return "ignore"
+	}
+	return id
+}
+
+func (r *Rules) add(id, pattern string, read, write bool) error {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("compile rule %s: %w", id, err)
+	}
+	compiled := compiledRule{id: id, re: re}
+	if read {
+		r.DenyRead = append(r.DenyRead, pattern)
+		r.read = append(r.read, compiled)
+	}
+	if write {
+		r.DenyWrite = append(r.DenyWrite, pattern)
+		r.write = append(r.write, compiled)
+	}
+	return nil
+}
+
+// MatchRead reports the rule id when path is unreadable without approval.
+func (r Rules) MatchRead(path string) (string, bool) {
+	return matchRule(r.read, path)
+}
+
+// MatchWrite reports the rule id when path is unwritable without approval.
+func (r Rules) MatchWrite(path string) (string, bool) {
+	return matchRule(r.write, path)
+}
+
+func matchRule(rules []compiledRule, path string) (string, bool) {
+	for _, rule := range rules {
+		if rule.re.MatchString(path) {
+			return rule.id, true
+		}
+	}
+	return "", false
 }
 
 func homeProtectedDirs() []string {

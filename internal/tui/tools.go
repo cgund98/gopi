@@ -68,7 +68,7 @@ func buildToolCard(
 		Args:        toolCall.Args,
 	}
 
-	requiresApproval := tool != nil && tool.RequiresApproval()
+	requiresApproval := toolCall.Reason != ""
 
 	switch {
 	case toolCall.IsPendingApproval() && requiresApproval:
@@ -213,11 +213,7 @@ func buildPendingApprovals(messages []gogent.Message, registry *gogent.ToolRegis
 		if _, ok := resolved[toolCall.ID]; ok {
 			continue
 		}
-		tool := registry.GetTool(toolCall.ToolName)
-		if tool == nil || !tool.RequiresApproval() {
-			continue
-		}
-		if !toolCall.IsPendingApproval() {
+		if toolCall.Reason == "" || !toolCall.IsPendingApproval() {
 			continue
 		}
 		out = append(out, gogent.PendingToolCall{
@@ -225,6 +221,7 @@ func buildPendingApprovals(messages []gogent.Message, registry *gogent.ToolRegis
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.ToolName,
 			Args:       toolCall.Args,
+			Reason:     toolCall.Reason,
 		})
 	}
 	return out

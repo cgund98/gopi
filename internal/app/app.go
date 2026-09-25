@@ -10,7 +10,9 @@ import (
 	"github.com/cgund98/gogent/inmemory"
 	"github.com/cgund98/gogent/openai"
 	"github.com/cgund98/gopi/internal/config"
+	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/prompt"
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/tools"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
@@ -34,17 +36,23 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		return nil, fmt.Errorf("OPENAI_API_KEY is required")
 	}
 
+	rules, err := policy.Build(root.Path, cfg.HomeDir, "")
+	if err != nil {
+		return nil, fmt.Errorf("build path policy: %w", err)
+	}
 	registry := gogent.NewToolRegistry()
-	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust}
+	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust, Rules: rules}
 	fileTools := []gogent.Tool{
-		&tools.ReadFile{Root: root},
-		&tools.Grep{Root: root},
-		&tools.Find{Root: root},
+		&tools.ReadFile{Root: root, Rules: rules},
+		&tools.Grep{Root: root, Rules: rules},
+		&tools.Find{Root: root, Rules: rules},
 		&tools.Shell{Root: root, HomeDir: cfg.HomeDir},
 		edit,
 	}
+	redact := gopisecrets.NewRedactor(cfg.Secrets).Apply
 	for _, tool := range fileTools {
-		if err := registry.RegisterTool(tool); err != nil {
+		wrapped := tools.WrapRedacting(tool, redact)
+		if err := registry.RegisterTool(wrapped); err != nil {
 			return nil, fmt.Errorf("register tool %s: %w", tool.Name(), err)
 		}
 	}

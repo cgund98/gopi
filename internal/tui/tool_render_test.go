@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -144,5 +145,34 @@ func TestShellOutputIsFramed(t *testing.T) {
 	plain = stripANSI(truncated)
 	if strings.Count(plain, "\n│ line") != shellPreviewLines || !strings.Contains(plain, "15 more lines") {
 		t.Fatalf("shell preview = %q", plain)
+	}
+}
+
+func TestApprovalPromptShowsReason(t *testing.T) {
+	view := stripANSI(renderApprovalPrompt(gogent.PendingToolCall{
+		ToolName: "read_file",
+		Args:     json.RawMessage(`{"path":".env"}`),
+		Reason:   "Protected path **/.env: scratch/demo/.env",
+	}, 60))
+	if !strings.Contains(view, "read .env") || !strings.Contains(view, "Protected path **/.env: scratch/demo/.env") || strings.Contains(view, `"path"`) {
+		t.Fatalf("prompt = %q", view)
+	}
+
+	shell := stripANSI(renderApprovalPrompt(gogent.PendingToolCall{
+		ToolName: "shell",
+		Args:     json.RawMessage(`{"command":"cat .env","read_paths":[".env"]}`),
+		Reason:   "Elevated file access: read /work/.env",
+	}, 60))
+	if !strings.Contains(shell, "shell cat .env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
+		t.Fatalf("shell prompt = %q", shell)
+	}
+
+	unknown := stripANSI(renderApprovalPrompt(gogent.PendingToolCall{
+		ToolName: "custom",
+		Args:     json.RawMessage(`{"query":"hi"}`),
+		Reason:   "approval required",
+	}, 60))
+	if !strings.Contains(unknown, `"query"`) {
+		t.Fatalf("unknown prompt = %q", unknown)
 	}
 }

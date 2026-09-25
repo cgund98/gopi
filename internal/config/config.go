@@ -8,6 +8,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
+
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 const (
@@ -33,6 +35,7 @@ type Config struct {
 	SystemPrompt  string
 	OpenAIAPIKey  string
 	HomeDir       string
+	Secrets       map[string]string
 }
 
 type envSecrets struct {
@@ -108,12 +111,22 @@ func Load(dir string, builtinPrompt string) (Config, error) {
 		return Config{}, err
 	}
 
+	broker, err := gopisecrets.Load(dir)
+	if err != nil {
+		return Config{}, err
+	}
+	apiKey := secrets.OpenAIAPIKey
+	if broker["openai_api_key"] != "" {
+		apiKey = broker["openai_api_key"]
+	}
+
 	return Config{
 		Model:         file.Model,
 		MaxIterations: file.MaxIterations,
 		SystemPrompt:  prompt,
-		OpenAIAPIKey:  secrets.OpenAIAPIKey,
+		OpenAIAPIKey:  apiKey,
 		HomeDir:       dir,
+		Secrets:       broker,
 	}, nil
 }
 

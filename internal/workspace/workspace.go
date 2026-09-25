@@ -35,21 +35,30 @@ func Open(path string) (Root, error) {
 // Resolve canonicalizes candidate and reports whether it stays inside the workspace.
 // A symlink whose target leaves the workspace is outside.
 func (r Root) Resolve(candidate string) (string, error) {
+	resolved, outside, err := r.Canonical(candidate)
+	if err != nil {
+		return "", err
+	}
+	if outside {
+		return "", fmt.Errorf("path %s is outside the workspace", candidate)
+	}
+	return resolved, nil
+}
+
+// Canonical resolves candidate without refusing paths that leave the workspace.
+func (r Root) Canonical(candidate string) (resolved string, outside bool, err error) {
 	if candidate == "" {
-		return "", fmt.Errorf("path is empty")
+		return "", false, fmt.Errorf("path is empty")
 	}
 	joined := candidate
 	if !filepath.IsAbs(joined) {
 		joined = filepath.Join(r.Path, candidate)
 	}
-	resolved, err := resolveExistingPrefix(joined)
+	resolved, err = resolveExistingPrefix(joined)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	if !inside(r.Path, resolved) {
-		return "", fmt.Errorf("path %s is outside the workspace", candidate)
-	}
-	return resolved, nil
+	return resolved, !inside(r.Path, resolved), nil
 }
 
 func resolveExistingPrefix(path string) (string, error) {

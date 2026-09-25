@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/cgund98/gogent"
+	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
@@ -18,25 +19,42 @@ type readFileArgs struct {
 
 // ReadFile reads a text file inside the workspace.
 type ReadFile struct {
-	Root workspace.Root
+	Root  workspace.Root
+	Rules policy.Rules
 }
 
 func (t *ReadFile) Name() string { return "read_file" }
 
 func (t *ReadFile) Description() string {
-	return "Read a file inside the workspace. Paths outside the workspace are refused."
+	return "Read a file. Paths outside the workspace and protected paths require approval."
 }
 
 func (t *ReadFile) Parameters() json.RawMessage { return schemaFor(new(readFileArgs)) }
 
-func (t *ReadFile) RequiresApproval() bool { return false }
+func (t *ReadFile) RequiresApproval(_ context.Context, raw json.RawMessage) (gogent.ApprovalDecision, error) {
+	resolved, outside, err := t.locate(raw)
+	if err != nil {
+		return gogent.ApprovalDecision{}, nil
+	}
+	if outside {
+		reason := "Path is outside the workspace: " + displayPath(raw)
+		if rule, ok := t.Rules.MatchRead(resolved); ok {
+			reason = "Protected path " + rule + ": " + displayPath(raw)
+		}
+		return gogent.ApprovalDecision{Required: true, Reason: reason}, nil
+	}
+	if rule, ok := t.Rules.MatchRead(resolved); ok {
+		return gogent.ApprovalDecision{Required: true, Reason: "Protected path " + rule + ": " + displayPath(raw)}, nil
+	}
+	return gogent.ApprovalDecision{}, nil
+}
 
 func (t *ReadFile) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var args readFileArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, fmt.Errorf("parse arguments: %w", err)
 	}
-	resolved, err := t.Root.Resolve(args.Path)
+	resolved, _, err := t.Root.Canonical(args.Path)
 	if err != nil {
 		return accessDenied(args.Path, err.Error()), nil
 	}
@@ -52,6 +70,22 @@ func (t *ReadFile) Execute(_ context.Context, raw json.RawMessage) (json.RawMess
 		"path":    args.Path,
 		"content": text,
 	})
+}
+
+func (t *ReadFile) locate(raw json.RawMessage) (resolved string, outside bool, err error) {
+	var args readFileArgs
+	if err = json.Unmarshal(raw, &args); err != nil {
+		return "", false, fmt.Errorf("parse arguments: %w", err)
+	}
+	return t.Root.Canonical(args.Path)
+}
+
+func displayPath(raw json.RawMessage) string {
+	var args readFileArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return ""
+	}
+	return args.Path
 }
 
 func sliceLines(text string, offset, limit int) string {

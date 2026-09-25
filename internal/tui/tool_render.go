@@ -181,6 +181,39 @@ func renderShellOutput(stdout, stderr string, exitCode int, truncated bool, widt
 	return diffFrameStyle.Width(inner).Render(strings.Join(body, "\n"))
 }
 
+func renderApprovalBody(card toolCardView, width int) string {
+	switch card.ToolName {
+	case "edit_file":
+		return renderToolBody(card, width)
+	case "read_file", "grep", "find", "shell":
+		return renderPathGrants(card.Args, width)
+	default:
+		return renderToolArgsBlock(card.Args, width)
+	}
+}
+
+func renderPathGrants(args json.RawMessage, width int) string {
+	var lines []string
+	for _, path := range stringListArg(args, "read_paths") {
+		lines = append(lines, "read "+path)
+	}
+	for _, path := range stringListArg(args, "write_paths") {
+		lines = append(lines, "write "+path)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	bodyWidth := width - 2
+	if bodyWidth < 20 {
+		bodyWidth = 20
+	}
+	var out []string
+	for _, line := range lines {
+		out = append(out, toolDimStyle.Render("  "+truncateWidth(line, bodyWidth)))
+	}
+	return strings.Join(out, "\n")
+}
+
 func searchHeadline(name string, args json.RawMessage) string {
 	pattern := stringArg(args, "pattern")
 	path := stringArg(args, "path")
@@ -394,4 +427,20 @@ func stringArg(raw json.RawMessage, key string) string {
 	}
 	value, _ := args[key].(string)
 	return value
+}
+
+func stringListArg(raw json.RawMessage, key string) []string {
+	var args map[string]any
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return nil
+	}
+	items, _ := args[key].([]any)
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		path, ok := item.(string)
+		if ok && path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
