@@ -44,6 +44,9 @@ func newProgram(ctx context.Context, session *app.Session, decisions *trust.Stor
 	}
 	model.chat.modelName = session.Config.Model
 	model.chat.workspacePath = session.Root.Path
+	if session.Model != nil {
+		model.chat.systemPrompt = session.Model.SystemPrompt()
+	}
 	if session.Workspace == trust.WorkspaceUnknown {
 		model.phase = phaseTrust
 		return model
@@ -105,6 +108,9 @@ func (m *programModel) chooseTrust(trusted bool) tea.Cmd {
 	if err := m.session.RefreshPrompt(); err != nil {
 		m.err = err
 		return nil
+	}
+	if m.session.Model != nil {
+		m.chat.systemPrompt = m.session.Model.SystemPrompt()
 	}
 	m.phase = phaseChat
 	cmds := []tea.Cmd{m.chat.Init()}

@@ -16,13 +16,23 @@ import (
 )
 
 func TestStatusSuffixShowsModelWorkspaceAndThinking(t *testing.T) {
-	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", false, 48)), " ")
-	if !strings.HasPrefix(idle, "/tmp/gopi") || !strings.HasSuffix(idle, "gpt-6-sol") || strings.Contains(idle, "thinking") {
+	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", 12, false, 48)), " ")
+	if !strings.HasPrefix(idle, "/tmp/gopi") || !strings.HasSuffix(idle, "gpt-6-sol | 12%") || strings.Contains(idle, "thinking") {
 		t.Fatalf("idle suffix = %q", idle)
 	}
-	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", true, 48)), " ")
-	if !strings.HasPrefix(busy, "/tmp/gopi") || !strings.HasSuffix(busy, "gpt-6-sol | thinking") {
+	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", 12, true, 48)), " ")
+	if !strings.HasPrefix(busy, "/tmp/gopi") || !strings.HasSuffix(busy, "gpt-6-sol | 12% | thinking") {
 		t.Fatalf("busy suffix = %q", busy)
+	}
+}
+
+func TestContextPercentUsesTranscript(t *testing.T) {
+	if got := contextPercent("", nil, ""); got != 0 {
+		t.Fatalf("empty = %d", got)
+	}
+	messages := []gogent.Message{{Content: strings.Repeat("a", contextWindowTokens*4)}}
+	if got := contextPercent("", messages, ""); got != 100 {
+		t.Fatalf("full = %d", got)
 	}
 }
 

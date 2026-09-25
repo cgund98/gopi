@@ -37,6 +37,7 @@ type chatModel struct {
 	err              error
 	modelName        string
 	workspacePath    string
+	systemPrompt     string
 
 	width  int
 	height int
@@ -332,7 +333,7 @@ func (m *chatModel) View() string {
 	b.WriteByte('\n')
 	b.WriteString(renderDivider(m.width))
 	b.WriteByte('\n')
-	b.WriteString(renderStatusSuffix(m.modelName, m.workspacePath, m.busy, m.width))
+	b.WriteString(renderStatusSuffix(m.modelName, m.workspacePath, contextPercent(m.systemPrompt, m.messages, m.input.Value()), m.busy, m.width))
 
 	return b.String()
 }
@@ -344,12 +345,12 @@ func renderDivider(width int) string {
 	return dividerStyle.Render(strings.Repeat("─", width))
 }
 
-func renderStatusSuffix(model, workspace string, thinking bool, width int) string {
+func renderStatusSuffix(model, workspace string, contextPct int, thinking bool, width int) string {
 	if model == "" {
 		model = "model"
 	}
 	left := displayWorkspace(workspace)
-	right := model
+	right := fmt.Sprintf("%s | %d%%", model, contextPct)
 	if thinking {
 		right += " | thinking"
 	}
@@ -363,6 +364,24 @@ func renderStatusSuffix(model, workspace string, thinking bool, width int) strin
 		gap = 1
 	}
 	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
+}
+
+const contextWindowTokens = 128000
+
+func contextPercent(system string, messages []gogent.Message, draft string) int {
+	chars := len(system) + len(draft)
+	for _, message := range messages {
+		chars += len(message.Content)
+		for _, call := range message.ToolCalls {
+			chars += len(call.ToolName) + len(call.Args) + len(call.Result)
+		}
+	}
+	tokens := chars / 4
+	percent := tokens * 100 / contextWindowTokens
+	if percent > 100 {
+		return 100
+	}
+	return percent
 }
 
 func displayWorkspace(path string) string {

@@ -148,6 +148,15 @@ func TestShellOutputIsFramed(t *testing.T) {
 	}
 }
 
+func TestDelegateOutputIsFramed(t *testing.T) {
+	body := renderFriendlyResult(toolCardView{ToolName: "delegate"}, `{"answer":"the helper lives in app.go","tool_calls":2,"denied":[".env: approval is not available to a subagent"]}`, 60)
+	plain := stripANSI(body)
+	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "the helper lives in app.go") || !strings.Contains(plain, ".env:") || !strings.Contains(plain, "2 tool calls") {
+		t.Fatalf("delegate frame = %q", plain)
+	}
+	assertFrameContainsLines(t, body)
+}
+
 func TestApprovalPromptShowsReason(t *testing.T) {
 	view := stripANSI(renderApprovalPrompt(gogent.PendingToolCall{
 		ToolName: "read_file",

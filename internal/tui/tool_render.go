@@ -37,6 +37,11 @@ func toolHeadline(card toolCardView) string {
 			return "shell " + command
 		}
 		return "shell"
+	case "delegate":
+		if task := stringArg(card.Args, "task"); task != "" {
+			return "delegate " + task
+		}
+		return "delegate"
 	default:
 		return card.ToolName
 	}
@@ -132,6 +137,16 @@ func renderFriendlyResult(card toolCardView, content string, width int) string {
 			return ""
 		}
 		return renderShellOutput(payload.Stdout, payload.Stderr, payload.ExitCode, payload.Truncated, width)
+	case "delegate":
+		var payload struct {
+			Answer    string   `json:"answer"`
+			ToolCalls int      `json:"tool_calls"`
+			Denied    []string `json:"denied"`
+		}
+		if err := json.Unmarshal([]byte(content), &payload); err != nil {
+			return ""
+		}
+		return renderDelegateOutput(payload.Answer, payload.Denied, payload.ToolCalls, width)
 	default:
 		return ""
 	}
@@ -165,20 +180,59 @@ func renderShellOutput(stdout, stderr string, exitCode int, truncated bool, widt
 		lines = []string{"(no output)"}
 	}
 
-	frameWidth := width - 2
-	if frameWidth < 28 {
-		frameWidth = 28
+	return renderOutputFrame(lines, width)
+}
+
+func renderDelegateOutput(answer string, denied []string, toolCalls int, width int) string {
+	_, textWidth := outputFrameMetrics(width)
+	var lines []string
+	if text := strings.TrimSpace(answer); text != "" {
+		lines = append(lines, strings.Split(wrapText(text, textWidth+2), "\n")...)
 	}
-	inner := frameWidth - 2
-	textWidth := inner - diffFrameStyle.GetHorizontalPadding()
-	if textWidth < 1 {
-		textWidth = 1
+	for _, item := range denied {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		lines = append(lines, strings.Split(wrapText(item, textWidth+2), "\n")...)
 	}
+	if toolCalls > 0 {
+		label := "1 tool call"
+		if toolCalls != 1 {
+			label = fmt.Sprintf("%d tool calls", toolCalls)
+		}
+		lines = append(lines, label)
+	}
+	preview, hidden := previewLines(strings.Join(lines, "\n"), maxDiffLines)
+	shown := []string{"(no answer)"}
+	if strings.TrimSpace(preview) != "" {
+		shown = strings.Split(preview, "\n")
+	}
+	if hidden > 0 {
+		shown = append(shown, fmt.Sprintf("… %d more lines", hidden))
+	}
+	return renderOutputFrame(shown, width)
+}
+
+func renderOutputFrame(lines []string, width int) string {
+	inner, textWidth := outputFrameMetrics(width)
 	var body []string
 	for _, line := range lines {
 		body = append(body, toolDimStyle.Render(truncateWidth(line, textWidth)))
 	}
 	return diffFrameStyle.Width(inner).Render(strings.Join(body, "\n"))
+}
+
+func outputFrameMetrics(width int) (inner, textWidth int) {
+	frameWidth := width - 2
+	if frameWidth < 28 {
+		frameWidth = 28
+	}
+	inner = frameWidth - 2
+	textWidth = inner - diffFrameStyle.GetHorizontalPadding()
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	return inner, textWidth
 }
 
 func renderApprovalBody(card toolCardView, width int) string {

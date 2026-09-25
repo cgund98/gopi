@@ -63,6 +63,24 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		return nil, fmt.Errorf("assemble prompt: %w", err)
 	}
 	client := openaisdk.NewClient(option.WithAPIKey(cfg.OpenAIAPIKey))
+	delegate := &tools.Delegate{
+		Root:       root,
+		Rules:      rules,
+		HomeDir:    cfg.HomeDir,
+		Network:    cfg.Network,
+		AllowHosts: cfg.AllowHosts,
+		DenyHosts:  cfg.DenyHosts,
+		Redact:     redact,
+		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
+			return openai.NewChat(&client, registry).
+				WithModel(cfg.Model).
+				WithSystemPrompt(text).
+				Build()
+		},
+	}
+	if err := registry.RegisterTool(tools.WrapRedacting(delegate, redact)); err != nil {
+		return nil, fmt.Errorf("register tool delegate: %w", err)
+	}
 	model, err := openai.NewChat(&client, registry).
 		WithModel(cfg.Model).
 		WithSystemPrompt(text).
