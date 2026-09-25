@@ -54,6 +54,11 @@ func toolHeadline(card toolCardView) string {
 			return "search " + query
 		}
 		return "search"
+	case "web_fetch":
+		if target := stringArg(card.Args, "url"); target != "" {
+			return "fetch " + target
+		}
+		return "fetch"
 	default:
 		return card.ToolName
 	}
@@ -72,7 +77,7 @@ func hideToolResult(card toolCardView) bool {
 		return false
 	}
 	switch card.ToolName {
-	case "edit_file", "read_file", "grep", "find", "web_search":
+	case "edit_file", "read_file", "grep", "find", "web_search", "web_fetch":
 		return true
 	default:
 		return false

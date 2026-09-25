@@ -484,17 +484,16 @@ The TUI switches the session among Agent, Ask, and Plan with `/agent`, `/ask`, `
 
 | Mode | Tools | What the model does |
 |------|--------|---------------------|
-| Agent | `read_file`, `grep`, `find`, `shell`, `edit_file`, `delegate`, `web_search` | Changes the workspace and runs commands |
-| Ask | `read_file`, `grep`, `find`, `web_search` | Answers questions about the workspace and the public web. `edit_file` and `shell` are not registered |
+| Agent | `read_file`, `grep`, `find`, `shell`, `edit_file`, `delegate`, `web_search`, `web_fetch` | Changes the workspace and runs commands |
+| Ask | `read_file`, `grep`, `find`, `web_search`, `web_fetch` | Answers questions about the workspace and the public web. `edit_file` and `shell` are not registered |
 | Plan | Ask's tools, plus `write_plan` | Explores, then writes `<workspace>/.gopi/plans/<plan_name>-<uuid>.md`. No file edits and no shell until the user switches to Agent |
 
-Plan does not auto-apply when the user accepts it. Applying the plan is an Agent turn the user starts explicitly. `write_plan` does not ask for approval inside a trusted workspace. A child started by `delegate` does not receive `edit_file`, `delegate`, or `web_search`, and elevated calls fail closed.
+Plan does not auto-apply when the user accepts it. Applying the plan is an Agent turn the user starts explicitly. `write_plan` does not ask for approval inside a trusted workspace. A child started by `delegate` does not receive `edit_file`, `delegate`, `web_search`, or `web_fetch`, and elevated calls fail closed.
 
 ## Remaining work
 
 1. **Linux sandbox.** A Bubblewrap launcher for the same `Profile` type, with the same escape tests as Seatbelt. Never execute a `bwrap` discovered inside the workspace.
-2. **`web_fetch`.** A tool that reads one URL and returns the page text. It is separate from `web_search`. The request stays on the host, follows the same redirect checks as search, and does not open a socket inside `shell`.
-3. **Live task list.** During an Agent turn the model keeps a short checklist, and the TUI shows it with the transcript. Completing, adding, or dropping an item updates that list. Plan files under `.gopi/plans/` stay the written plan for a later build.
+2. **Live task list.** During an Agent turn the model keeps a short checklist, and the TUI shows it with the transcript. Completing, adding, or dropping an item updates that list. Plan files under `.gopi/plans/` stay the written plan for a later build.
 
 ## Gogent constraints to preserve
 

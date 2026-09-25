@@ -127,6 +127,10 @@ func TestReadAndGrepHeadlines(t *testing.T) {
 	if got := toolHeadline(shell); got != "$ go test" {
 		t.Fatalf("shell headline = %q", got)
 	}
+	fetch := toolCardView{ToolName: "web_fetch", Args: json.RawMessage(`{"url":"https://example.com/docs"}`)}
+	if got := toolHeadline(fetch); got != "fetch https://example.com/docs" {
+		t.Fatalf("fetch headline = %q", got)
+	}
 }
 
 func TestShellCommandWraps(t *testing.T) {
@@ -190,6 +194,17 @@ func TestSearchResultStaysHidden(t *testing.T) {
 	failed.Result = `{"error":"execution_failed","message":"` + gopisecrets.SearchAPIKey + ` is missing"}`
 	if hideToolResult(failed) {
 		t.Fatal("failed search should stay visible")
+	}
+	fetched := toolCardView{
+		ToolName: "web_fetch",
+		Result:   `{"url":"https://example.com","title":"Docs","text":"Read this"}`,
+	}
+	if !hideToolResult(fetched) {
+		t.Fatal("successful fetch should hide its page text")
+	}
+	fetched.Result = `{"error":"execution_failed","message":"url must be http or https"}`
+	if hideToolResult(fetched) {
+		t.Fatal("failed fetch should stay visible")
 	}
 }
 

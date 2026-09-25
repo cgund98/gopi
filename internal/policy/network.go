@@ -55,6 +55,30 @@ func (p NetworkPolicy) Check(host string, addrs []net.IP) error {
 	return nil
 }
 
+// Public reports whether a host may be fetched without using the shell allowlist.
+// An empty address list fails closed. Private and metadata addresses are refused.
+func Public(host string, addrs []net.IP) error {
+	name := normalizeHost(host)
+	if name == "" {
+		return fmt.Errorf("missing host")
+	}
+	if isMetadataHost(name) {
+		return fmt.Errorf("metadata host %s", name)
+	}
+	if ip := net.ParseIP(name); ip != nil {
+		addrs = append([]net.IP{ip}, addrs...)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("host %s did not resolve", name)
+	}
+	for _, addr := range addrs {
+		if blockedAddress(addr) {
+			return fmt.Errorf("host %s resolved to %s", name, addr)
+		}
+	}
+	return nil
+}
+
 func normalizeHost(host string) string {
 	host = strings.TrimSpace(strings.ToLower(host))
 	host = strings.TrimSuffix(host, ".")

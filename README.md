@@ -59,7 +59,7 @@ endpoint = ""             # empty uses Brave Search
 
 A name without a prefix uses OpenAI. A `kimi/` prefix uses Kimi. Supported names are `gpt-4o-mini`, `gpt-4o`, and `kimi/kimi-k2.6`. An unknown name fails at startup. `kimi_api_key` in `secrets.toml` overrides `KIMI_API_KEY`. A key is required only when a resolved model uses that provider.
 
-`web_search` calls `https://api.search.brave.com/res/v1/web/search` unless `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. The shell sandbox stays on its own network setting.
+`web_search` calls `https://api.search.brave.com/res/v1/web/search` unless `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. The shell sandbox stays on its own network setting. `web_fetch` reads one public `http` or `https` URL on the host. It does not use the search key or open a socket inside `shell`.
 
 A `*` in a host pattern matches one DNS label, as in `*.npmjs.org`.
 

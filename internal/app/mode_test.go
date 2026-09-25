@@ -35,7 +35,7 @@ func TestModesSwitchRegistryAndKeepTranscript(t *testing.T) {
 	askNames := toolNames(t, session.registries[ModeAsk])
 	planNames := toolNames(t, session.registries[ModePlan])
 	agentNames := toolNames(t, session.registries[ModeAgent])
-	for _, name := range []string{"read_file", "grep", "find", "web_search"} {
+	for _, name := range []string{"read_file", "grep", "find", "web_search", "web_fetch"} {
 		if !askNames[name] || !planNames[name] || !agentNames[name] {
 			t.Fatalf("missing %s ask=%v plan=%v agent=%v", name, askNames, planNames, agentNames)
 		}

@@ -67,6 +67,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 	}
 	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets}
 	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets[gopisecrets.SearchAPIKey]}
+	fetch := &tools.WebFetch{}
 	redact := gopisecrets.NewRedactor(cfg.Secrets).Apply
 
 	text, err := prompt.Assemble(promptOptions(cfg, root.Path, workspaceTrust))
@@ -98,9 +99,9 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 			return session.models.New(session.active, registry, session.basePrompt)
 		},
 	}
-	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search)
-	askTools := append(append([]gogent.Tool{}, read...), search)
-	planTools := append(append([]gogent.Tool{}, read...), plan, search)
+	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch)
+	askTools := append(append([]gogent.Tool{}, read...), search, fetch)
+	planTools := append(append([]gogent.Tool{}, read...), plan, search, fetch)
 	agentTools = append(agentTools, extra[ModeAgent]...)
 	askTools = append(askTools, extra[ModeAsk]...)
 	planTools = append(planTools, extra[ModePlan]...)
