@@ -145,7 +145,7 @@ func (m *chatModel) resolveSubmissionPending() (gogent.PendingToolCall, bool) {
 func renderApprovalPrompt(pending gogent.PendingToolCall, width int) string {
 	card := toolCardView{ToolName: pending.ToolName, Args: pending.Args}
 	var b strings.Builder
-	b.WriteString(renderToolLine(toolHeadline(card), toolCardPending, true))
+	b.WriteString(renderToolLine(toolHeadline(card), toolCardPending, true, width))
 	b.WriteString("\n\n")
 	if pending.Reason != "" {
 		b.WriteString(statusStyle.Render(pending.Reason))

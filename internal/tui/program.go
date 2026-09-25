@@ -115,7 +115,7 @@ func (m *programModel) bindChat(session *app.Session) {
 	m.chat.store = session.Store
 	m.chat.registry = session.Registry
 	m.chat.events = session.Events
-	m.chat.modelName = session.Config.Model
+	m.chat.modelName = session.ActiveModel()
 	m.chat.workspacePath = session.Root.Path
 	m.chat.mode = session.Mode
 	m.chat.input.Prompt = modePrompt(session.Mode)
@@ -128,6 +128,21 @@ func (m *programModel) bindChat(session *app.Session) {
 		if m.session.Model != nil {
 			m.chat.systemPrompt = m.session.Model.SystemPrompt()
 		}
+		m.chat.modelName = m.session.ActiveModel()
+		return nil
+	}
+	m.chat.prepareBuild = func() error {
+		if err := m.session.SetBuild(); err != nil {
+			return err
+		}
+		m.chat.agent = m.session.Agent
+		m.chat.registry = m.session.Registry
+		if m.session.Model != nil {
+			m.chat.systemPrompt = m.session.Model.SystemPrompt()
+		}
+		m.chat.modelName = m.session.ActiveModel()
+		m.chat.mode = app.ModeAgent
+		m.chat.input.Prompt = modePrompt(app.ModeAgent)
 		return nil
 	}
 	if session.Model != nil {
@@ -298,6 +313,9 @@ func (m *programModel) applyLoaded(msg sessionLoadedMsg) {
 	}
 	m.chat.err = nil
 	m.chat.status = ""
+	if !msg.Fresh {
+		m.chat.seedSeenPlans(msg.File.Messages)
+	}
 	m.chat.afterStoreRefresh()
 	if msg.Body != "" {
 		m.chat.transcriptVP.SetContent(msg.Body)
@@ -329,6 +347,7 @@ func (m *programModel) resume(file sess.File) error {
 	m.adoptReview(file)
 	m.chat.err = nil
 	m.chat.status = ""
+	m.chat.seedSeenPlans(file.Messages)
 	m.chat.afterStoreRefresh()
 	if next.Workspace == trust.WorkspaceUnknown {
 		m.phase = phaseTrust
@@ -356,6 +375,7 @@ func (m *programModel) resumeHere(file sess.File) error {
 	m.adoptReview(file)
 	m.chat.err = nil
 	m.chat.status = ""
+	m.chat.seedSeenPlans(file.Messages)
 	m.chat.afterStoreRefresh()
 	return nil
 }

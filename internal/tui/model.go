@@ -46,6 +46,7 @@ type chatModel struct {
 	systemPrompt     string
 	mode             app.Mode
 	switchMode       func(app.Mode) error
+	prepareBuild     func() error
 	runCancel        context.CancelFunc
 	planOpen         bool
 	planPath         string

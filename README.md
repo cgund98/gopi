@@ -33,6 +33,12 @@ Gopi keeps its files in `~/.gopi`, mode `0700`. `GOPI_HOME` overrides that direc
 model = "gpt-4o-mini"
 max_iterations = 10
 
+[models]
+agent = "gpt-4o"          # empty uses model
+ask = ""
+plan = ""
+build = ""                # empty uses the agent model; the b key on a plan uses this
+
 [sandbox]
 network = "deny"          # deny | allowlist
 
@@ -50,6 +56,8 @@ endpoint = ""             # empty uses Brave Search
 ```
 
 `network` defaults to `deny`. `allowlist` sends shell traffic through a local proxy and still blocks private and metadata addresses. `unrestricted` is not a config setting. A single shell call can ask for `network_hosts` or `network = "unrestricted"`, and that call waits for approval.
+
+A name without a prefix uses OpenAI. A `kimi/` prefix uses Kimi. Supported names are `gpt-4o-mini`, `gpt-4o`, and `kimi/kimi-k2.6`. An unknown name fails at startup. `kimi_api_key` in `secrets.toml` overrides `KIMI_API_KEY`. A key is required only when a resolved model uses that provider.
 
 `web_search` calls `https://api.search.brave.com/res/v1/web/search` unless `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. The shell sandbox stays on its own network setting.
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cgund98/gogent"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type toolCardState string
@@ -114,7 +115,7 @@ func toolCardIndex(cards []toolCardView, toolCallID string) int {
 }
 
 func renderInlineToolBlock(card toolCardView, selected bool, width int) string {
-	header := renderToolLine(toolHeadline(card), card.State, selected)
+	header := renderToolLine(toolHeadline(card), card.State, selected, width)
 	body := renderToolBody(card, width)
 	if body == "" {
 		return header
@@ -122,19 +123,28 @@ func renderInlineToolBlock(card toolCardView, selected bool, width int) string {
 	return header + "\n" + body
 }
 
-func renderToolLine(name string, state toolCardState, selected bool) string {
-	line := "> " + name
-	if selected {
-		return toolSelectedStyle.Render(line)
+func renderToolLine(name string, state toolCardState, selected bool, width int) string {
+	text := "> " + name
+	maxWidth := width
+	if maxWidth < 8 {
+		maxWidth = 8
 	}
-	switch state {
-	case toolCardCompleted:
-		return toolSuccessStyle.Render(line)
-	case toolCardRejected, toolCardFailed:
-		return toolErrorStyle.Render(line)
+	var style lipgloss.Style
+	switch {
+	case selected:
+		style = toolSelectedStyle
+	case state == toolCardCompleted:
+		style = toolSuccessStyle
+	case state == toolCardRejected || state == toolCardFailed:
+		style = toolErrorStyle
 	default:
-		return toolDimStyle.Render(line)
+		style = toolDimStyle
 	}
+	var out []string
+	for _, part := range wrapWidth(text, maxWidth) {
+		out = append(out, style.Render(part))
+	}
+	return strings.Join(out, "\n")
 }
 
 func renderToolArgsBlock(args json.RawMessage, width int) string {

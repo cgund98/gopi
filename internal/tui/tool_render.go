@@ -209,7 +209,9 @@ func renderOutputFrame(lines []string, width int) string {
 	inner, textWidth := outputFrameMetrics(width)
 	var body []string
 	for _, line := range lines {
-		body = append(body, toolDimStyle.Render(truncateWidth(line, textWidth)))
+		for _, part := range wrapWidth(line, textWidth) {
+			body = append(body, toolDimStyle.Render(part))
+		}
 	}
 	return diffFrameStyle.Width(inner).Render(strings.Join(body, "\n"))
 }

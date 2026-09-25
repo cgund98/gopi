@@ -52,6 +52,29 @@ func TestPlanViewerOpensAndCloses(t *testing.T) {
 	}
 }
 
+func TestSeenPlansStayClosed(t *testing.T) {
+	dir := t.TempDir()
+	rel := ".gopi/plans/ship-it.md"
+	if err := os.MkdirAll(filepath.Join(dir, ".gopi", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte("# Hello plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	messages := []gogent.Message{
+		gogent.NewToolResultMessage("call-1", `{"path":".gopi/plans/ship-it.md","status":"created"}`),
+	}
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.workspacePath = dir
+	chat.messages = messages
+	chat.toolCards = []toolCardView{{ToolCallID: "call-1", ToolName: "write_plan"}}
+	chat.seedSeenPlans(messages)
+	chat.noticeWrittenPlans()
+	if chat.planOpen {
+		t.Fatal("a plan already in the transcript should stay closed")
+	}
+}
+
 func TestPlansMenuOrdersAndDeletesInsidePlansDir(t *testing.T) {
 	dir := t.TempDir()
 	plans := filepath.Join(dir, ".gopi", "plans")

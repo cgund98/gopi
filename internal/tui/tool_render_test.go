@@ -8,6 +8,8 @@ import (
 
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/lipgloss"
+
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 func TestEditHeadlineAndDiff(t *testing.T) {
@@ -127,6 +129,32 @@ func TestReadAndGrepHeadlines(t *testing.T) {
 	}
 }
 
+func TestShellCommandWraps(t *testing.T) {
+	command := strings.Repeat("echo ", 20) + "done"
+	card := toolCardView{ToolName: "shell", Args: json.RawMessage(`{"command":"` + command + `"}`)}
+	rendered := stripANSI(renderInlineToolBlock(card, false, 40))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("command stayed on one line: %q", rendered)
+	}
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w > 40 {
+			t.Fatalf("line width %d exceeds 40: %q", w, line)
+		}
+	}
+	if !strings.HasPrefix(lines[0], "> shell echo") {
+		t.Fatalf("first line = %q", lines[0])
+	}
+
+	stdout := strings.Repeat("x", 80)
+	body := renderFriendlyResult(toolCardView{ToolName: "shell"}, fmt.Sprintf(`{"stdout":%q,"stderr":"","exit_code":0}`, stdout), 40)
+	assertFrameContainsLines(t, body)
+	plain := stripANSI(body)
+	if strings.Count(plain, "x") != len(stdout) {
+		t.Fatalf("wrapped shell output dropped characters: %q", plain)
+	}
+}
+
 func TestShellOutputIsFramed(t *testing.T) {
 	body := renderFriendlyResult(toolCardView{ToolName: "shell"}, `{"stdout":"ok","stderr":"","exit_code":0}`, 60)
 	plain := stripANSI(body)
@@ -159,7 +187,7 @@ func TestSearchResultStaysHidden(t *testing.T) {
 		t.Fatal("successful search should hide its results")
 	}
 	failed := card
-	failed.Result = `{"error":"execution_failed","message":"search_api_key is missing"}`
+	failed.Result = `{"error":"execution_failed","message":"` + gopisecrets.SearchAPIKey + ` is missing"}`
 	if hideToolResult(failed) {
 		t.Fatal("failed search should stay visible")
 	}

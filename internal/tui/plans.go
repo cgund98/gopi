@@ -166,7 +166,12 @@ func (m *chatModel) buildPlan() tea.Cmd {
 		return nil
 	}
 	path := m.planPath
-	if m.switchMode != nil {
+	if m.prepareBuild != nil {
+		if err := m.prepareBuild(); err != nil {
+			m.status = err.Error()
+			return nil
+		}
+	} else if m.switchMode != nil {
 		if err := m.switchMode(app.ModeAgent); err != nil {
 			m.status = err.Error()
 			return nil

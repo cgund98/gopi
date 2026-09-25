@@ -8,8 +8,6 @@ import (
 	"github.com/cgund98/gogent"
 	"github.com/cgund98/gogent/inmemory"
 	"github.com/cgund98/gogent/openai"
-	openaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
 
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/policy"
@@ -45,7 +43,8 @@ type Session struct {
 
 	registries map[Mode]*gogent.ToolRegistry
 	extra      map[Mode][]gogent.Tool
-	client     openaisdk.Client
+	models     *modelFactory
+	active     string
 	basePrompt string
 }
 
@@ -53,10 +52,6 @@ type Session struct {
 // extra adds tools to a mode. A name that matches a built-in tool is an error.
 // Extra tools are not registered on the delegate child.
 func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace, extra map[Mode][]gogent.Tool) (*Session, error) {
-	if cfg.OpenAIAPIKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY is required")
-	}
-
 	rules, err := policy.Build(root.Path, cfg.HomeDir, "")
 	if err != nil {
 		return nil, fmt.Errorf("build path policy: %w", err)
@@ -69,14 +64,13 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		&tools.Find{Root: root, Rules: rules},
 	}
 	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets}
-	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets["search_api_key"]}
+	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets[gopisecrets.SearchAPIKey]}
 	redact := gopisecrets.NewRedactor(cfg.Secrets).Apply
 
 	text, err := prompt.Assemble(promptOptions(cfg, root.Path, workspaceTrust))
 	if err != nil {
 		return nil, fmt.Errorf("assemble prompt: %w", err)
 	}
-	client := openaisdk.NewClient(option.WithAPIKey(cfg.OpenAIAPIKey))
 	session := &Session{
 		Root:       root,
 		Workspace:  workspaceTrust,
@@ -86,7 +80,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		Mode:       ModeAgent,
 		registries: map[Mode]*gogent.ToolRegistry{},
 		extra:      extra,
-		client:     client,
+		models:     newModelFactory(cfg),
 		basePrompt: text,
 	}
 	delegate := &tools.Delegate{
@@ -98,10 +92,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		DenyHosts:  cfg.DenyHosts,
 		Redact:     redact,
 		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
-			return openai.NewChat(&session.client, registry).
-				WithModel(cfg.Model).
-				WithSystemPrompt(session.basePrompt).
-				Build()
+			return session.models.New(session.active, registry, session.basePrompt)
 		},
 	}
 	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search)
@@ -147,18 +138,29 @@ func registerTools(list []gogent.Tool, redact func(string) string) (*gogent.Tool
 	return registry, nil
 }
 
-// SetMode switches the registry and prompt prefix. The transcript stays on the same store.
+// ActiveModel is the model name of the current turn.
+func (s *Session) ActiveModel() string {
+	return s.active
+}
+
+// SetMode switches the registry, prompt prefix, and that mode's model.
 func (s *Session) SetMode(mode Mode) error {
 	switch mode {
 	case ModeAgent, ModeAsk, ModePlan:
 	default:
 		return fmt.Errorf("unknown mode %q", mode)
 	}
+	return s.apply(mode, s.Config.ModelFor(string(mode)))
+}
+
+// SetBuild selects the agent registry and the build model for one plan turn.
+func (s *Session) SetBuild() error {
+	return s.apply(ModeAgent, s.Config.BuildModelName())
+}
+
+func (s *Session) apply(mode Mode, name string) error {
 	registry := s.registries[mode]
-	model, err := openai.NewChat(&s.client, registry).
-		WithModel(s.Config.Model).
-		WithSystemPrompt(prompt.WithMode(s.basePrompt, string(mode))).
-		Build()
+	model, err := s.models.New(name, registry, prompt.WithMode(s.basePrompt, string(mode)))
 	if err != nil {
 		return fmt.Errorf("build model: %w", err)
 	}
@@ -169,6 +171,7 @@ func (s *Session) SetMode(mode Mode) error {
 		s.Events = gogent.NewChannelBroadcaster()
 	}
 	s.Mode = mode
+	s.active = name
 	s.Registry = registry
 	s.Model = model
 	s.Agent = gogent.NewAgent(s.Store, s.Events, model, registry, s.Config.MaxIterations)
@@ -177,10 +180,7 @@ func (s *Session) SetMode(mode Mode) error {
 
 // ChatTitle asks the model for a short title and sends no tools.
 func (s *Session) ChatTitle(ctx context.Context, userText, assistantText string) (string, error) {
-	model, err := openai.NewChat(&s.client, gogent.NewToolRegistry()).
-		WithModel(s.Config.Model).
-		WithSystemPrompt("Reply with a short chat title of at most 6 words and nothing else.").
-		Build()
+	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Reply with a short chat title of at most 6 words and nothing else.")
 	if err != nil {
 		return "", err
 	}

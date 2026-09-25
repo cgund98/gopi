@@ -20,7 +20,7 @@ func TestModesSwitchRegistryAndKeepTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	session, err := New(config.Config{
-		Model:         "gpt-6-sol",
+		Model:         "gpt-4o-mini",
 		MaxIterations: 2,
 		OpenAIAPIKey:  "test-key",
 		HomeDir:       t.TempDir(),

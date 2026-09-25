@@ -206,16 +206,34 @@ func wrapText(text string, width int) string {
 }
 
 func breakLine(line string, maxWidth int) []string {
-	if len(line) <= maxWidth {
+	return wrapWidth(line, maxWidth)
+}
+
+func wrapWidth(line string, maxWidth int) []string {
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	if lipgloss.Width(line) <= maxWidth {
 		return []string{line}
 	}
 	var parts []string
-	for len(line) > maxWidth {
-		parts = append(parts, line[:maxWidth])
-		line = line[maxWidth:]
+	var current strings.Builder
+	width := 0
+	for _, r := range line {
+		rw := lipgloss.Width(string(r))
+		if rw > maxWidth {
+			rw = maxWidth
+		}
+		if width > 0 && width+rw > maxWidth {
+			parts = append(parts, current.String())
+			current.Reset()
+			width = 0
+		}
+		current.WriteRune(r)
+		width += rw
 	}
-	if line != "" {
-		parts = append(parts, line)
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
 	}
 	return parts
 }

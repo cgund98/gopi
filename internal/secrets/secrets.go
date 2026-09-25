@@ -11,6 +11,22 @@ import (
 
 const fileName = "secrets.toml"
 
+const (
+	OpenAIAPIKey = "openai_api_key"
+	KimiAPIKey   = "kimi_api_key"
+	SearchAPIKey = "search_api_key"
+)
+
+// HostOnly reports keys that stay on the host and are never offered to shell.
+func HostOnly(name string) bool {
+	switch name {
+	case OpenAIAPIKey, KimiAPIKey, SearchAPIKey:
+		return true
+	default:
+		return false
+	}
+}
+
 // Load reads ~/.gopi/secrets.toml. A missing file yields an empty map.
 // A group- or world-readable file is refused.
 func Load(homeDir string) (map[string]string, error) {
@@ -40,8 +56,7 @@ func Load(homeDir string) (map[string]string, error) {
 func OfferNames(values map[string]string) []string {
 	names := make([]string, 0, len(values))
 	for name := range values {
-		switch name {
-		case "openai_api_key", "search_api_key":
+		if HostOnly(name) {
 			continue
 		}
 		names = append(names, name)

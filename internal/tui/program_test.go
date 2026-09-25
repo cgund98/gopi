@@ -16,6 +16,7 @@ import (
 
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/tools"
 	"github.com/cgund98/gopi/internal/trust"
@@ -280,7 +281,7 @@ func TestResumeSwapsWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	cfg := config.Config{Model: "gpt-6-sol", MaxIterations: 2, OpenAIAPIKey: "test-key", HomeDir: home, Network: "deny"}
+	cfg := config.Config{Model: "gpt-4o-mini", MaxIterations: 2, OpenAIAPIKey: "test-key", HomeDir: home, Network: "deny"}
 	decisions, err := trust.Open(home)
 	if err != nil {
 		t.Fatal(err)
@@ -456,7 +457,7 @@ func TestSecretToggleWritesSelectedName(t *testing.T) {
 	chat := newChatModel(context.Background(), nil, store, gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
 	chat.secretNames = []string{"DEPLOY_TOKEN"}
 	message := gogent.NewAssistantMessageWithToolCalls("", []gogent.ToolCall{
-		gogent.NewPendingToolCall("call-1", "shell", json.RawMessage(`{"command":"echo hi","secret_names":["openai_api_key"]}`)),
+		gogent.NewPendingToolCall("call-1", "shell", json.RawMessage(`{"command":"echo hi","secret_names":["`+gopisecrets.OpenAIAPIKey+`"]}`)),
 	})
 	if err := store.AddMessages(context.Background(), chat.chatID, message); err != nil {
 		t.Fatal(err)
@@ -468,7 +469,7 @@ func TestSecretToggleWritesSelectedName(t *testing.T) {
 	}}
 	chat.syncApprovalFocus()
 	view := stripANSI(chat.approvalList.View())
-	if strings.Contains(view, "openai_api_key") || !strings.Contains(view, "DEPLOY_TOKEN") {
+	if strings.Contains(view, gopisecrets.OpenAIAPIKey) || !strings.Contains(view, "DEPLOY_TOKEN") {
 		t.Fatalf("approval list = %q", view)
 	}
 	chat.approvalList.Select(0)
@@ -481,7 +482,7 @@ func TestSecretToggleWritesSelectedName(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := string(loaded.ToolCalls[0].Args)
-	if strings.Contains(args, "openai_api_key") || !strings.Contains(args, "DEPLOY_TOKEN") {
+	if strings.Contains(args, gopisecrets.OpenAIAPIKey) || !strings.Contains(args, "DEPLOY_TOKEN") {
 		t.Fatalf("args = %s", args)
 	}
 }

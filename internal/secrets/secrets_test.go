@@ -12,14 +12,14 @@ func TestLoadSecretsToml(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, "secrets.toml")
-	if err := os.WriteFile(path, []byte("openai_api_key = \"sk-test-value\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(OpenAIAPIKey+" = \"sk-test-value\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	values, err := Load(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if values["openai_api_key"] != "sk-test-value" {
+	if values[OpenAIAPIKey] != "sk-test-value" {
 		t.Fatalf("values = %#v", values)
 	}
 	redacted := NewRedactor(values).Apply("key is sk-test-value and also sk-abcdefghijklmnopqrstuvwxyz")
@@ -31,7 +31,7 @@ func TestLoadSecretsToml(t *testing.T) {
 func TestLoadRefusesLooseSecretsFile(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, "secrets.toml")
-	if err := os.WriteFile(path, []byte("openai_api_key = \"x\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(OpenAIAPIKey+" = \"x\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(home); err == nil {
@@ -41,9 +41,10 @@ func TestLoadRefusesLooseSecretsFile(t *testing.T) {
 
 func TestOfferNamesHidesHostKeys(t *testing.T) {
 	names := OfferNames(map[string]string{
-		"openai_api_key": "sk",
-		"search_api_key": "brave",
-		"DEPLOY_TOKEN":   "token",
+		OpenAIAPIKey:   "sk",
+		KimiAPIKey:     "kimi",
+		SearchAPIKey:   "brave",
+		"DEPLOY_TOKEN": "token",
 	})
 	if len(names) != 1 || names[0] != "DEPLOY_TOKEN" {
 		t.Fatalf("names = %#v", names)

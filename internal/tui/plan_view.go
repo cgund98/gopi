@@ -13,6 +13,17 @@ import (
 
 const planViewHelp = "b build · esc or q back to chat"
 
+func (m *chatModel) seedSeenPlans(messages []gogent.Message) {
+	if m.seenPlans == nil {
+		m.seenPlans = map[string]bool{}
+	}
+	for _, message := range messages {
+		if message.Role == gogent.MessageRoleTool && message.ToolCallID != "" {
+			m.seenPlans[message.ToolCallID] = true
+		}
+	}
+}
+
 func (m *chatModel) noticeWrittenPlans() {
 	if m.seenPlans == nil {
 		m.seenPlans = map[string]bool{}

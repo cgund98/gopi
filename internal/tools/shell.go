@@ -14,6 +14,7 @@ import (
 
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/sandbox"
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
@@ -321,8 +322,7 @@ func injectedSecretNames(secrets map[string]string, requested []string) []string
 			continue
 		}
 		seen[name] = true
-		switch name {
-		case "openai_api_key", "search_api_key":
+		if gopisecrets.HostOnly(name) {
 			continue
 		}
 		if _, ok := secrets[name]; !ok {

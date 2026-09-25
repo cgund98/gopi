@@ -493,13 +493,11 @@ Plan does not auto-apply when the user accepts it. Applying the plan is an Agent
 ## Remaining work
 
 1. **Linux sandbox.** A Bubblewrap launcher for the same `Profile` type, with the same escape tests as Seatbelt. Never execute a `bwrap` discovered inside the workspace.
-2. **Per-mode model defaults.** `~/.gopi/config.toml` sets a default model for each mode. A global `model` remains the fallback. Example: Agent uses `gpt-4o`, and the turn that builds a plan uses a stronger model such as Opus.
-3. **Kimi.** Support Kimi 2.x as a model choice. It is cheaper than the comparable OpenAI models and uses its own API key. Selecting it does not change the tool, sandbox, or approval path.
-4. **Usage and cost.** The TUI shows provider-reported token counts for each model turn and a running session total, including input, output, and cached tokens when the provider sends them. It also shows an estimated cost from those counts and the selected model's prices.
-5. **`/model`.** A composer command that sets the model for the active mode. Later turns in that mode use the chosen model. The other modes keep their own defaults. The active model is shown with the mode in the prompt.
-6. **`/compact`.** A composer command that summarizes the transcript when the context window fills. The summary replaces the older turns in the session, and the recent turns stay. The context meter uses that compacted transcript.
-7. **`web_fetch`.** A tool that reads one URL and returns the page text. It is separate from `web_search`. The request stays on the host, follows the same redirect checks as search, and does not open a socket inside `shell`.
-8. **Live task list.** During an Agent turn the model keeps a short checklist, and the TUI shows it with the transcript. Completing, adding, or dropping an item updates that list. Plan files under `.gopi/plans/` stay the written plan for a later build.
+2. **Usage and cost.** The TUI shows provider-reported token counts for each model turn and a running session total, including input, output, and cached tokens when the provider sends them. It also shows an estimated cost from those counts and the selected model's prices.
+3. **`/model`.** A composer command that sets the model for the active mode. Later turns in that mode use the chosen model. The other modes keep their own defaults. The active model is shown with the mode in the prompt.
+4. **`/compact`.** A composer command that summarizes the transcript when the context window fills. The summary replaces the older turns in the session, and the recent turns stay. The context meter uses that compacted transcript.
+5. **`web_fetch`.** A tool that reads one URL and returns the page text. It is separate from `web_search`. The request stays on the host, follows the same redirect checks as search, and does not open a socket inside `shell`.
+6. **Live task list.** During an Agent turn the model keeps a short checklist, and the TUI shows it with the transcript. Completing, adding, or dropping an item updates that list. Plan files under `.gopi/plans/` stay the written plan for a later build.
 
 ## Gogent constraints to preserve
 

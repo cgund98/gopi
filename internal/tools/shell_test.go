@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cgund98/gopi/internal/sandbox"
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 func TestShellRejectsWiderProfileAndOutsideCwd(t *testing.T) {
@@ -308,7 +309,7 @@ func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
 	root := openTemp(t)
 	home := t.TempDir()
 	const secret = "token-value-xyz"
-	tool := &Shell{Root: root, HomeDir: home, Secrets: map[string]string{"DEPLOY_TOKEN": secret, "openai_api_key": "sk-host"}}
+	tool := &Shell{Root: root, HomeDir: home, Secrets: map[string]string{"DEPLOY_TOKEN": secret, gopisecrets.OpenAIAPIKey: "sk-host"}}
 	orig := launchCommand
 	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
 		value := ""
@@ -323,7 +324,7 @@ func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
 		return sandbox.Result{Stdout: value}, nil
 	}
 	defer func() { launchCommand = orig }()
-	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN","openai_api_key"]}`))
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN","`+gopisecrets.OpenAIAPIKey+`"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
