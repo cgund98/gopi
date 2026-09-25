@@ -102,6 +102,10 @@ func (m *programModel) chooseTrust(trusted bool) tea.Cmd {
 		m.session.Workspace = trust.WorkspaceUntrusted
 		m.session.Edit.Workspace = trust.WorkspaceUntrusted
 	}
+	if err := m.session.RefreshPrompt(); err != nil {
+		m.err = err
+		return nil
+	}
 	m.phase = phaseChat
 	cmds := []tea.Cmd{m.chat.Init()}
 	if m.haveSize {

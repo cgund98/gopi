@@ -27,9 +27,10 @@ const (
 // [sandbox.network] is rewritten to [sandbox.hosts] before decode, because TOML
 // cannot store both network = "deny" and a [sandbox.network] table.
 type File struct {
-	Model         string      `toml:"model"`
-	MaxIterations int         `toml:"max_iterations"`
-	Sandbox       SandboxFile `toml:"sandbox"`
+	Model         string           `toml:"model"`
+	MaxIterations int              `toml:"max_iterations"`
+	Sandbox       SandboxFile      `toml:"sandbox"`
+	Instructions  InstructionsFile `toml:"instructions"`
 }
 
 // SandboxFile is the [sandbox] table.
@@ -38,7 +39,12 @@ type SandboxFile struct {
 	Hosts   HostsFile `toml:"hosts"`
 }
 
-// HostsFile is the allow and deny hostname lists.
+// InstructionsFile is the [instructions] table.
+type InstructionsFile struct {
+	ProjectDocMaxBytes int      `toml:"project_doc_max_bytes"`
+	FallbackFiles      []string `toml:"fallback_files"`
+	SkillDirs          []string `toml:"skill_dirs"`
+}
 type HostsFile struct {
 	Allow []string `toml:"allow"`
 	Deny  []string `toml:"deny"`
@@ -46,15 +52,19 @@ type HostsFile struct {
 
 // Config is the process configuration for one gopi run.
 type Config struct {
-	Model         string
-	MaxIterations int
-	SystemPrompt  string
-	OpenAIAPIKey  string
-	HomeDir       string
-	Secrets       map[string]string
-	Network       string
-	AllowHosts    []string
-	DenyHosts     []string
+	Model              string
+	MaxIterations      int
+	SystemPrompt       string
+	OpenAIAPIKey       string
+	HomeDir            string
+	Secrets            map[string]string
+	Network            string
+	AllowHosts         []string
+	DenyHosts          []string
+	UserPrompt         string
+	ProjectDocMaxBytes int
+	FallbackFiles      []string
+	SkillDirs          []string
 }
 
 type envSecrets struct {
@@ -98,9 +108,9 @@ func EnsureHome(dir string) error {
 }
 
 // Load reads config.toml from dir, creating a default file when missing.
-// system.md in the same directory replaces the built-in prompt when present.
+// system.md is returned as UserPrompt and does not replace the built-in prompt.
 // OPENAI_API_KEY is read from the environment after optional .env files.
-func Load(dir string, builtinPrompt string) (Config, error) {
+func Load(dir string) (Config, error) {
 	if err := EnsureHome(dir); err != nil {
 		return Config{}, err
 	}
@@ -119,11 +129,14 @@ func Load(dir string, builtinPrompt string) (Config, error) {
 	if file.MaxIterations <= 0 {
 		file.MaxIterations = defaultMaxIter
 	}
+	if file.Instructions.ProjectDocMaxBytes <= 0 {
+		file.Instructions.ProjectDocMaxBytes = 32768
+	}
 
-	prompt := builtinPrompt
+	var userPrompt string
 	systemPath := filepath.Join(dir, systemPromptFile)
 	if body, err := os.ReadFile(systemPath); err == nil {
-		prompt = string(body)
+		userPrompt = string(body)
 	} else if !os.IsNotExist(err) {
 		return Config{}, fmt.Errorf("read system prompt: %w", err)
 	}
@@ -143,15 +156,19 @@ func Load(dir string, builtinPrompt string) (Config, error) {
 	}
 
 	return Config{
-		Model:         file.Model,
-		MaxIterations: file.MaxIterations,
-		SystemPrompt:  prompt,
-		OpenAIAPIKey:  apiKey,
-		HomeDir:       dir,
-		Secrets:       broker,
-		Network:       file.Sandbox.Network,
-		AllowHosts:    file.Sandbox.Hosts.Allow,
-		DenyHosts:     file.Sandbox.Hosts.Deny,
+		Model:              file.Model,
+		MaxIterations:      file.MaxIterations,
+		SystemPrompt:       "",
+		OpenAIAPIKey:       apiKey,
+		HomeDir:            dir,
+		Secrets:            broker,
+		Network:            file.Sandbox.Network,
+		AllowHosts:         file.Sandbox.Hosts.Allow,
+		DenyHosts:          file.Sandbox.Hosts.Deny,
+		UserPrompt:         userPrompt,
+		ProjectDocMaxBytes: file.Instructions.ProjectDocMaxBytes,
+		FallbackFiles:      file.Instructions.FallbackFiles,
+		SkillDirs:          file.Instructions.SkillDirs,
 	}, nil
 }
 

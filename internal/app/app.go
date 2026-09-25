@@ -21,6 +21,7 @@ import (
 // Session is one workspace chat wired to a gogent agent.
 type Session struct {
 	Agent     *gogent.Agent
+	Model     *openai.Model
 	Store     gogent.MessageStore
 	Registry  *gogent.ToolRegistry
 	Events    *gogent.ChannelBroadcaster
@@ -57,10 +58,14 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		}
 	}
 
+	text, err := prompt.Assemble(promptOptions(cfg, root.Path, workspaceTrust))
+	if err != nil {
+		return nil, fmt.Errorf("assemble prompt: %w", err)
+	}
 	client := openaisdk.NewClient(option.WithAPIKey(cfg.OpenAIAPIKey))
 	model, err := openai.NewChat(&client, registry).
 		WithModel(cfg.Model).
-		WithSystemPrompt(prompt.WithWorkspace(cfg.SystemPrompt, root.Path)).
+		WithSystemPrompt(text).
 		Build()
 	if err != nil {
 		return nil, fmt.Errorf("build model: %w", err)
@@ -71,6 +76,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 	agent := gogent.NewAgent(store, events, model, registry, cfg.MaxIterations)
 	return &Session{
 		Agent:     agent,
+		Model:     model,
 		Store:     store,
 		Registry:  registry,
 		Events:    events,
@@ -79,4 +85,30 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		Config:    cfg,
 		Edit:      edit,
 	}, nil
+}
+
+// RefreshPrompt rebuilds the system prompt after the workspace trust decision changes.
+func (s *Session) RefreshPrompt() error {
+	if s.Model == nil {
+		return nil
+	}
+	text, err := prompt.Assemble(promptOptions(s.Config, s.Root.Path, s.Workspace))
+	if err != nil {
+		return err
+	}
+	s.Model.SetSystemPrompt(text)
+	return nil
+}
+
+func promptOptions(cfg config.Config, workspace string, workspaceTrust trust.Workspace) prompt.Options {
+	return prompt.Options{
+		Base:          prompt.Builtin(),
+		HomeDir:       cfg.HomeDir,
+		Workspace:     workspace,
+		Trusted:       workspaceTrust == trust.WorkspaceTrusted,
+		UserPrompt:    cfg.UserPrompt,
+		MaxBytes:      cfg.ProjectDocMaxBytes,
+		SkillDirs:     cfg.SkillDirs,
+		FallbackFiles: cfg.FallbackFiles,
+	}
 }

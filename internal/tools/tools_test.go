@@ -78,6 +78,40 @@ func TestReadAndEditInsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestEditProtectedPathRequiresApproval(t *testing.T) {
+	root := openTemp(t)
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted, Rules: rules}
+	raw := json.RawMessage(`{"path":".gopi/skills/lint/SKILL.md","old":"","new":"---\nname: lint\n---\n"}`)
+	decision, err := tool.RequiresApproval(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required || !strings.Contains(decision.Reason, ".gopi") {
+		t.Fatalf("decision = %#v", decision)
+	}
+	plain, err := tool.RequiresApproval(context.Background(), json.RawMessage(`{"path":"note.txt","old":"","new":"hi"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Required {
+		t.Fatalf("plain edit should not pause: %#v", plain)
+	}
+	if _, err := tool.Execute(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(root.Path, ".gopi", "skills", "lint", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "name: lint") {
+		t.Fatalf("body = %s", body)
+	}
+}
+
 func TestFindListsAndFiltersFileNames(t *testing.T) {
 	root := openTemp(t)
 	for _, path := range []string{"note.txt", filepath.Join("pkg", "note.go")} {

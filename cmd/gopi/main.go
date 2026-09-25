@@ -9,7 +9,6 @@ import (
 
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
-	"github.com/cgund98/gopi/internal/prompt"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/tui"
 	"github.com/cgund98/gopi/internal/workspace"
@@ -33,7 +32,7 @@ func run(ctx context.Context, workspaceFlag string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(home, prompt.Builtin())
+	cfg, err := config.Load(home)
 	if err != nil {
 		return err
 	}

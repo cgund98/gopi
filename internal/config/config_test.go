@@ -17,7 +17,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(dir, "builtin")
+	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,8 +27,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MaxIterations != 10 {
 		t.Fatalf("max iterations = %d", cfg.MaxIterations)
 	}
-	if cfg.SystemPrompt != "builtin" {
-		t.Fatalf("prompt = %q", cfg.SystemPrompt)
+	if cfg.UserPrompt != "" {
+		t.Fatalf("user prompt = %q", cfg.UserPrompt)
 	}
 	if cfg.OpenAIAPIKey != "test-key" {
 		t.Fatalf("api key = %q", cfg.OpenAIAPIKey)
@@ -49,12 +49,12 @@ func TestLoadSystemPromptFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "system.md"), []byte("custom"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(dir, "builtin")
+	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SystemPrompt != "custom" {
-		t.Fatalf("prompt = %q", cfg.SystemPrompt)
+	if cfg.UserPrompt != "custom" {
+		t.Fatalf("prompt = %q", cfg.UserPrompt)
 	}
 }
 
@@ -74,7 +74,7 @@ deny = ["evil.example"]
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(dir, "builtin")
+	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ deny = ["evil.example"]
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), bad, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(dir, "builtin"); err == nil {
+	if _, err := Load(dir); err == nil {
 		t.Fatal("expected unrestricted config to fail")
 	}
 }
