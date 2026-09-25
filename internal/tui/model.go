@@ -18,6 +18,7 @@ import (
 
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/session"
+	"github.com/cgund98/gopi/internal/tools"
 )
 
 type chatModel struct {
@@ -49,6 +50,9 @@ type chatModel struct {
 	setModel         func(string) error
 	summarize        func(context.Context, string) (gogent.Message, error)
 	prepareBuild     func() error
+	tasks            *tools.TaskList
+	taskEpoch        int
+	taskSeed         []tools.Task
 	modelOverrides   map[string]string
 	completeOpen     bool
 	completeIndex    int
@@ -362,6 +366,7 @@ func (m *chatModel) afterStoreRefresh() {
 	}
 
 	m.err = nil
+	m.syncTasks()
 	m.noticeWrittenPlans()
 	m.applyLayout()
 	m.syncApprovalFocus()
@@ -545,6 +550,7 @@ func (m *chatModel) footerLines() int {
 		footer += 2
 	}
 	footer += m.completeLines()
+	footer += m.taskPanelHeight()
 	return footer
 }
 
@@ -604,6 +610,10 @@ func (m *chatModel) View() string {
 	b.WriteString(m.transcriptVP.View())
 	b.WriteByte('\n')
 	for range footerBufferLines {
+		b.WriteByte('\n')
+	}
+	if panel := renderTaskPanel(m.visibleTasks(), m.width); panel != "" {
+		b.WriteString(panel)
 		b.WriteByte('\n')
 	}
 

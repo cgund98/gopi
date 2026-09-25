@@ -166,6 +166,12 @@ func (m *programModel) bindChat(session *app.Session) {
 		m.chat.systemPrompt = session.Model.SystemPrompt()
 	}
 	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets)
+	m.chat.tasks = session.Tasks
+	m.chat.taskEpoch = 0
+	m.chat.taskSeed = nil
+	if session.Tasks != nil {
+		session.Tasks.Clear()
+	}
 	m.bindEditReview()
 }
 
@@ -295,6 +301,11 @@ func (m *programModel) applyLoaded(msg sessionLoadedMsg) {
 		m.chat.messages = nil
 		m.chat.toolCards = nil
 		m.chat.pendingApprovals = nil
+		m.chat.taskEpoch = 0
+		m.chat.taskSeed = nil
+		if m.chat.tasks != nil {
+			m.chat.tasks.Clear()
+		}
 		m.chat.err = nil
 		m.chat.status = ""
 		m.chat.transcriptVP.SetContent(msg.Body)

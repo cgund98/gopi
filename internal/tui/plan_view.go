@@ -9,6 +9,8 @@ import (
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/cgund98/gopi/internal/tools"
 )
 
 const planViewHelp = "b build · esc or q back to chat"
@@ -82,8 +84,17 @@ func (m *chatModel) renderPlan() {
 	}
 	m.planVP.Height = height
 	title := planTitleStyle.Render(m.planPath)
-	body := renderMarkdown(m.planBody, width)
-	m.planVP.SetContent(title + "\n\n" + body)
+	todos, prose, err := tools.SplitPlan(m.planBody)
+	if err != nil {
+		prose = m.planBody
+		todos = nil
+	}
+	body := renderMarkdown(prose, width)
+	content := title + "\n\n" + body
+	if checklist := renderPlanTodos(todos, width); checklist != "" {
+		content = title + "\n\n" + checklist + "\n\n" + body
+	}
+	m.planVP.SetContent(content)
 }
 
 func (m *chatModel) closePlan() {

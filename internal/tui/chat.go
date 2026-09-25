@@ -101,9 +101,12 @@ func renderTranscriptProgress(
 				}
 				if result, ok := toolResults[toolCall.ID]; ok {
 					renderedResults[toolCall.ID] = struct{}{}
-					if idx < 0 || !hideToolResult(cards[idx]) {
+					if idx >= 0 && hideToolResult(cards[idx]) {
+						continue
+					}
+					if text := renderToolResultMessage(messages, cards, toolCall.ID, result, width); text != "" {
 						b.WriteByte('\n')
-						b.WriteString(renderToolResultMessage(cards, toolCall.ID, result, width))
+						b.WriteString(text)
 					}
 				}
 			}
@@ -119,8 +122,12 @@ func renderTranscriptProgress(
 			if _, ok := renderedResults[message.ToolCallID]; ok {
 				continue
 			}
+			text := renderToolResultMessage(messages, cards, message.ToolCallID, message, width)
+			if text == "" {
+				continue
+			}
 			writeTranscriptGap(&b, &first)
-			b.WriteString(renderToolResultMessage(cards, message.ToolCallID, message, width))
+			b.WriteString(text)
 			previousRole = gogent.MessageRoleTool
 		}
 	}
@@ -152,7 +159,10 @@ func renderAssistantContent(message gogent.Message, width int) string {
 	return renderMarkdown(message.Content, width)
 }
 
-func renderToolResultMessage(cards []toolCardView, toolCallID string, message gogent.Message, width int) string {
+func renderToolResultMessage(messages []gogent.Message, cards []toolCardView, toolCallID string, message gogent.Message, width int) string {
+	if card, ok := toolCardByID(cards, toolCallID); ok && card.ToolName == "tasks" && !strings.Contains(message.Content, `"error"`) {
+		return renderFinishedTaskLines(messages, cards, toolCallID, width)
+	}
 	if card, ok := toolCardByID(cards, toolCallID); ok {
 		if hideToolResult(card) {
 			return ""

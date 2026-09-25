@@ -40,6 +40,7 @@ type Session struct {
 	Config    config.Config
 	Edit      *tools.EditFile
 	WritePlan *tools.WritePlan
+	Tasks     *tools.TaskList
 	Mode      Mode
 
 	registries map[Mode]*gogent.ToolRegistry
@@ -68,6 +69,8 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets}
 	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets[gopisecrets.SearchAPIKey]}
 	fetch := &tools.WebFetch{}
+	taskList := tools.NewTaskList(root)
+	tasks := &tools.Tasks{List: taskList}
 	redact := gopisecrets.NewRedactor(cfg.Secrets).Apply
 
 	text, err := prompt.Assemble(promptOptions(cfg, root.Path, workspaceTrust))
@@ -80,6 +83,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		Config:     cfg,
 		Edit:       edit,
 		WritePlan:  plan,
+		Tasks:      taskList,
 		Mode:       ModeAgent,
 		registries: map[Mode]*gogent.ToolRegistry{},
 		extra:      extra,
@@ -99,7 +103,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 			return session.models.New(session.active, registry, session.basePrompt)
 		},
 	}
-	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch)
+	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch, tasks)
 	askTools := append(append([]gogent.Tool{}, read...), search, fetch)
 	planTools := append(append([]gogent.Tool{}, read...), plan, search, fetch)
 	agentTools = append(agentTools, extra[ModeAgent]...)

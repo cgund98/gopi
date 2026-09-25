@@ -52,6 +52,27 @@ func TestPlanViewerOpensAndCloses(t *testing.T) {
 	}
 }
 
+func TestPlanViewerShowsTodoChecklist(t *testing.T) {
+	dir := t.TempDir()
+	rel := ".gopi/plans/ship-it.md"
+	if err := os.MkdirAll(filepath.Join(dir, ".gopi", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\ntodos:\n  - id: \"fetch-tool\"\n    content: \"Add web_fetch\"\n    status: \"pending\"\n---\n# Hello plan\n\nDo the thing.\n"
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.width = 60
+	chat.height = 24
+	chat.workspacePath = dir
+	chat.openPlan(rel)
+	plain := stripANSI(chat.View())
+	if !strings.Contains(plain, "Todos") || !strings.Contains(plain, "Add web_fetch") || !strings.Contains(plain, "Hello plan") || strings.Contains(plain, "todos:") {
+		t.Fatalf("view = %q", plain)
+	}
+}
+
 func TestSeenPlansStayClosed(t *testing.T) {
 	dir := t.TempDir()
 	rel := ".gopi/plans/ship-it.md"
@@ -151,15 +172,15 @@ func TestBuildPlanSwitchesToAgent(t *testing.T) {
 		return nil
 	}
 	chat.openPlan(rel)
-	if strings.Contains(planBuildPrompt(chat.planPath), rel) == false {
-		t.Fatalf("prompt = %q", planBuildPrompt(chat.planPath))
+	if strings.Contains(planBuildPrompt(chat.planPath, nil), rel) == false {
+		t.Fatalf("prompt = %q", planBuildPrompt(chat.planPath, nil))
 	}
 	updated, cmd := chat.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	chat = updated.(*chatModel)
 	if chat.planOpen || switched != app.ModeAgent || !chat.busy || cmd == nil {
 		t.Fatalf("open = %v mode = %q busy = %v cmd = %v", chat.planOpen, switched, chat.busy, cmd != nil)
 	}
-	if !strings.Contains(planBuildPrompt(rel), rel) {
+	if !strings.Contains(planBuildPrompt(rel, nil), rel) {
 		t.Fatal("build prompt omitted the plan path")
 	}
 }

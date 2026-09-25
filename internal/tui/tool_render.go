@@ -59,6 +59,12 @@ func toolHeadline(card toolCardView) string {
 			return "fetch " + target
 		}
 		return "fetch"
+	case "tasks":
+		done, total := taskHeadlineCount(card.Result)
+		if total == 0 {
+			return "tasks"
+		}
+		return fmt.Sprintf("tasks %d/%d", done, total)
 	default:
 		return card.ToolName
 	}

@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/cgund98/gopi/internal/app"
+	"github.com/cgund98/gopi/internal/tools"
 )
 
 func (m *chatModel) openPlans() {
@@ -157,8 +158,22 @@ func planPath(workspace, rel string) (string, error) {
 	return full, nil
 }
 
-func planBuildPrompt(path string) string {
-	return "Implement the plan at " + path + ". Read that file and make the changes it describes."
+func planBuildPrompt(path string, items []tools.Task) string {
+	var b strings.Builder
+	b.WriteString("Implement the plan at " + path + ". Read that file and make the changes it describes. ")
+	if len(items) == 0 {
+		b.WriteString("The task list is empty. Batch-add the steps with tasks before you start, then mark one item in progress.")
+		return b.String()
+	}
+	b.WriteString("The task list is already loaded. Do not add these ids again. Mark one in progress, then completed, and leave the other ids out of the call.\n")
+	for _, item := range items {
+		status := item.Status
+		if status == "" {
+			status = "pending"
+		}
+		fmt.Fprintf(&b, "- %s (%s) %s\n", item.ID, status, item.Content)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m *chatModel) buildPlan() tea.Cmd {
@@ -166,6 +181,12 @@ func (m *chatModel) buildPlan() tea.Cmd {
 		return nil
 	}
 	path := m.planPath
+	body := m.planBody
+	items, _, err := tools.SplitPlan(body)
+	if err != nil {
+		m.status = err.Error()
+		return nil
+	}
 	if m.prepareBuild != nil {
 		if err := m.prepareBuild(); err != nil {
 			m.status = err.Error()
@@ -179,8 +200,16 @@ func (m *chatModel) buildPlan() tea.Cmd {
 		m.mode = app.ModeAgent
 		m.input.Prompt = modePrompt(app.ModeAgent)
 	}
+	m.taskEpoch = len(m.messages)
+	m.taskSeed = items
+	if m.tasks != nil {
+		if err := m.tasks.Set(items, path); err != nil {
+			m.status = err.Error()
+			return nil
+		}
+	}
 	m.closePlan()
-	text := planBuildPrompt(path)
+	text := planBuildPrompt(path, items)
 	return m.startRun(func(ctx context.Context) error {
 		if m.agent == nil {
 			return fmt.Errorf("agent is unavailable")

@@ -29,6 +29,9 @@ func TestModesSwitchRegistryAndKeepTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(session.Model.SystemPrompt(), "switch to Plan mode with /plan") {
+		t.Fatal("agent prompt missing plan switch")
+	}
 	if err := session.Store.AddMessages(t.Context(), "chat", gogent.NewUserMessage("keep me")); err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +51,11 @@ func TestModesSwitchRegistryAndKeepTranscript(t *testing.T) {
 	if !planNames["write_plan"] || planNames["edit_file"] || planNames["shell"] || planNames["delegate"] {
 		t.Fatalf("plan tools = %v", planNames)
 	}
-	if !agentNames["edit_file"] || !agentNames["shell"] || !agentNames["delegate"] || agentNames["write_plan"] {
+	if !agentNames["edit_file"] || !agentNames["shell"] || !agentNames["delegate"] || !agentNames["tasks"] || agentNames["write_plan"] {
 		t.Fatalf("agent tools = %v", agentNames)
+	}
+	if askNames["tasks"] || planNames["tasks"] {
+		t.Fatalf("tasks leaked ask=%v plan=%v", askNames["tasks"], planNames["tasks"])
 	}
 
 	if err := session.SetMode(ModePlan); err != nil {
@@ -63,6 +69,9 @@ func TestModesSwitchRegistryAndKeepTranscript(t *testing.T) {
 	}
 	if !strings.Contains(session.Model.SystemPrompt(), ".gitignore") {
 		t.Fatal("plan prompt missing gitignore note")
+	}
+	if !strings.Contains(session.Model.SystemPrompt(), "todos") {
+		t.Fatal("plan prompt missing todos")
 	}
 	messages, err := session.Store.Load(t.Context(), "chat")
 	if err != nil {
