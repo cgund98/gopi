@@ -27,8 +27,9 @@ func renderTranscript(
 	cards []toolCardView,
 	selectedTool int,
 	width int,
+	showUsage bool,
 ) string {
-	return renderTranscriptProgress(messages, cards, selectedTool, width, nil)
+	return renderTranscriptProgress(messages, cards, selectedTool, width, showUsage, nil)
 }
 
 func renderTranscriptProgress(
@@ -36,6 +37,7 @@ func renderTranscriptProgress(
 	cards []toolCardView,
 	selectedTool int,
 	width int,
+	showUsage bool,
 	progress func(done, total int),
 ) string {
 	if len(messages) == 0 {
@@ -51,7 +53,11 @@ func renderTranscriptProgress(
 
 	total := len(messages)
 	done := 0
-	for _, message := range messages {
+	usageAt := -1
+	if showUsage {
+		usageAt = lastUsageIndex(messages)
+	}
+	for i, message := range messages {
 		done++
 		if progress != nil {
 			progress(done, total)
@@ -99,6 +105,12 @@ func renderTranscriptProgress(
 						b.WriteByte('\n')
 						b.WriteString(renderToolResultMessage(cards, toolCall.ID, result, width))
 					}
+				}
+			}
+			if i == usageAt {
+				if line := formatTurnUsage(message.Usage); line != "" {
+					b.WriteByte('\n')
+					b.WriteString(toolDimStyle.Render(line))
 				}
 			}
 			previousRole = gogent.MessageRoleAssistant
@@ -238,17 +250,46 @@ func wrapWidth(line string, maxWidth int) []string {
 	return parts
 }
 
+func wrapBlock(text string, width int) string {
+	if width < 8 {
+		width = 8
+	}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		out = append(out, wrapWidth(line, width)...)
+	}
+	return strings.Join(out, "\n")
+}
+
+func wrapStyled(text string, style lipgloss.Style, width int) string {
+	var lines []string
+	for _, line := range strings.Split(wrapBlock(text, width), "\n") {
+		lines = append(lines, style.Render(line))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func lastUsageIndex(messages []gogent.Message) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == gogent.MessageRoleAssistant && !messages[i].Usage.Empty() {
+			return i
+		}
+	}
+	return -1
+}
+
 func syncTranscriptViewport(
 	vp *viewport.Model,
 	messages []gogent.Message,
 	cards []toolCardView,
 	selectedTool int,
 	followEnd bool,
+	showUsage bool,
 ) {
 	atBottom := vp.AtBottom()
 	offset := vp.YOffset
 
-	vp.SetContent(renderTranscript(messages, cards, selectedTool, vp.Width))
+	vp.SetContent(renderTranscript(messages, cards, selectedTool, vp.Width, showUsage))
 
 	if followEnd || atBottom {
 		vp.GotoBottom()

@@ -208,7 +208,7 @@ func (m *chatModel) renderPlans() string {
 	}
 	if m.planListErr != "" {
 		b.WriteString("\n\n")
-		b.WriteString(errStyle.Render(m.planListErr))
+		b.WriteString(wrapStyled(m.planListErr, errStyle, m.width))
 	}
 	b.WriteString("\n\n")
 	if m.planConfirm && m.planCursor >= 0 && m.planCursor < len(m.planRows) {

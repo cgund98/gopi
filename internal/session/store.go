@@ -18,13 +18,14 @@ const maxSessions = 50
 
 // File is one saved chat under ~/.gopi/sessions.
 type File struct {
-	ID        string           `json:"id"`
-	Title     string           `json:"title"`
-	Workspace string           `json:"workspace"`
-	Mode      string           `json:"mode"`
-	Updated   time.Time        `json:"updated"`
-	Messages  []gogent.Message `json:"messages"`
-	Review    []ReviewEntry    `json:"review,omitempty"`
+	ID        string            `json:"id"`
+	Title     string            `json:"title"`
+	Workspace string            `json:"workspace"`
+	Mode      string            `json:"mode"`
+	Updated   time.Time         `json:"updated"`
+	Messages  []gogent.Message  `json:"messages"`
+	Review    []ReviewEntry     `json:"review,omitempty"`
+	Models    map[string]string `json:"models,omitempty"`
 }
 
 // ReviewEntry is one path this session changed with edit_file.

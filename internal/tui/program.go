@@ -116,6 +116,7 @@ func (m *programModel) bindChat(session *app.Session) {
 	m.chat.registry = session.Registry
 	m.chat.events = session.Events
 	m.chat.modelName = session.ActiveModel()
+	m.chat.modelOverrides = session.ModelOverrides()
 	m.chat.workspacePath = session.Root.Path
 	m.chat.mode = session.Mode
 	m.chat.input.Prompt = modePrompt(session.Mode)
@@ -129,8 +130,23 @@ func (m *programModel) bindChat(session *app.Session) {
 			m.chat.systemPrompt = m.session.Model.SystemPrompt()
 		}
 		m.chat.modelName = m.session.ActiveModel()
+		m.chat.modelOverrides = m.session.ModelOverrides()
 		return nil
 	}
+	m.chat.setModel = func(name string) error {
+		if err := m.session.SetModel(name); err != nil {
+			return err
+		}
+		m.chat.agent = m.session.Agent
+		m.chat.registry = m.session.Registry
+		if m.session.Model != nil {
+			m.chat.systemPrompt = m.session.Model.SystemPrompt()
+		}
+		m.chat.modelName = m.session.ActiveModel()
+		m.chat.modelOverrides = m.session.ModelOverrides()
+		return nil
+	}
+	m.chat.summarize = m.session.Summarize
 	m.chat.prepareBuild = func() error {
 		if err := m.session.SetBuild(); err != nil {
 			return err
@@ -141,6 +157,7 @@ func (m *programModel) bindChat(session *app.Session) {
 			m.chat.systemPrompt = m.session.Model.SystemPrompt()
 		}
 		m.chat.modelName = m.session.ActiveModel()
+		m.chat.modelOverrides = m.session.ModelOverrides()
 		m.chat.mode = app.ModeAgent
 		m.chat.input.Prompt = modePrompt(app.ModeAgent)
 		return nil
@@ -213,7 +230,7 @@ func (m *programModel) runLoad(events chan tea.Msg, file *sess.File, width int) 
 		report("Preparing markdown")
 		prepareMarkdown(width)
 		cards := buildToolCards(messages, registry)
-		return renderTranscriptProgress(messages, cards, -1, width, func(done, total int) {
+		return renderTranscriptProgress(messages, cards, -1, width, true, func(done, total int) {
 			report(fmt.Sprintf("Rendering message %d of %d", done, total))
 		})
 	}
@@ -356,10 +373,8 @@ func (m *programModel) resume(file sess.File) error {
 }
 
 func (m *programModel) resumeHere(file sess.File) error {
-	if file.Mode != "" && app.Mode(file.Mode) != m.session.Mode {
-		if err := m.session.SetMode(app.Mode(file.Mode)); err != nil {
-			return err
-		}
+	if err := applySavedMode(m.session, file); err != nil {
+		return err
 	}
 	if err := m.session.Store.DeleteAllMessages(context.Background(), file.ID); err != nil {
 		return err
@@ -381,15 +396,32 @@ func (m *programModel) resumeHere(file sess.File) error {
 }
 
 func loadSavedChat(next *app.Session, file sess.File) error {
-	if file.Mode != "" {
-		if err := next.SetMode(app.Mode(file.Mode)); err != nil {
-			return err
-		}
+	if err := applySavedMode(next, file); err != nil {
+		return err
 	}
 	if len(file.Messages) == 0 {
 		return nil
 	}
 	return next.Store.AddMessages(context.Background(), file.ID, file.Messages...)
+}
+
+func applySavedMode(session *app.Session, file sess.File) error {
+	session.SetModelOverrides(file.Models)
+	target := session.Mode
+	if file.Mode != "" {
+		target = app.Mode(file.Mode)
+	}
+	want := ""
+	if file.Models != nil {
+		want = file.Models[string(target)]
+	}
+	if want == "" {
+		want = session.Config.ModelFor(string(target))
+	}
+	if target == session.Mode && want == session.ActiveModel() {
+		return nil
+	}
+	return session.SetMode(target)
 }
 
 func (m *programModel) chooseTrust(trusted bool) tea.Cmd {
@@ -441,7 +473,7 @@ func (m *programModel) View() string {
 	b.WriteString(helpStyle.Render("y trust · n read-only · q quit"))
 	if m.err != nil {
 		b.WriteString("\n")
-		b.WriteString(errStyle.Render(m.err.Error()))
+		b.WriteString(wrapStyled(m.err.Error(), errStyle, m.width))
 	}
 	return b.String()
 }

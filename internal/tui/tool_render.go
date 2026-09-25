@@ -33,9 +33,9 @@ func toolHeadline(card toolCardView) string {
 		return searchHeadline("find", card.Args)
 	case "shell":
 		if command := stringArg(card.Args, "command"); command != "" {
-			return "shell " + command
+			return "$ " + command
 		}
-		return "shell"
+		return "$"
 	case "delegate":
 		if task := stringArg(card.Args, "task"); task != "" {
 			return "delegate " + task
@@ -190,9 +190,17 @@ func renderPlanResult(card toolCardView, content string, width int) string {
 		verb = "Created"
 	}
 	inner, textWidth := outputFrameMetrics(width)
-	lines := []string{planTitleStyle.Render(truncateWidth(verb+" "+payload.Path, textWidth))}
+	lines := []string{}
+	pathParts := wrapWidth(verb+" "+payload.Path, textWidth)
+	for i, part := range pathParts {
+		if i == 0 {
+			lines = append(lines, planTitleStyle.Render(part))
+			continue
+		}
+		lines = append(lines, planTitleStyle.Render(part))
+	}
 	if payload.Gitignore {
-		lines = append(lines, toolDimStyle.Render(truncateWidth("Added .gopi/plans to .gitignore", textWidth)))
+		lines = append(lines, toolDimStyle.Render(strings.Join(wrapWidth("Added .gopi/plans to .gitignore", textWidth), "\n")))
 	}
 	if body := strings.TrimSpace(stringArg(card.Args, "body")); body != "" {
 		preview, hidden := previewLines(body, maxDiffLines)
@@ -263,7 +271,9 @@ func renderPathGrants(args json.RawMessage, width int) string {
 	}
 	var out []string
 	for _, line := range lines {
-		out = append(out, toolDimStyle.Render("  "+truncateWidth(line, bodyWidth)))
+		for _, part := range wrapWidth(line, bodyWidth) {
+			out = append(out, toolDimStyle.Render("  "+part))
+		}
 	}
 	return strings.Join(out, "\n")
 }
@@ -285,11 +295,11 @@ func searchHeadline(name string, args json.RawMessage) string {
 
 func indentBlock(text string, width int) string {
 	bodyWidth := width - 2
-	if bodyWidth < 20 {
-		bodyWidth = 20
+	if bodyWidth < 8 {
+		bodyWidth = 8
 	}
 	var out []string
-	for _, line := range strings.Split(wrapText(text, bodyWidth), "\n") {
+	for _, line := range strings.Split(wrapBlock(text, bodyWidth), "\n") {
 		out = append(out, "  "+line)
 	}
 	return strings.Join(out, "\n")
@@ -376,19 +386,27 @@ func renderEditDiff(path, old, newText string, width int) string {
 	}
 
 	added, deleted := lineCount(newText), lineCount(old)
-	header := path
 	counts := fmt.Sprintf("+%d −%d", added, deleted)
-	gap := textWidth - lipgloss.Width(header) - lipgloss.Width(counts)
-	if gap < 1 {
-		header = truncateWidth(header, textWidth-lipgloss.Width(counts)-1)
-		gap = textWidth - lipgloss.Width(header) - lipgloss.Width(counts)
+	room := textWidth - lipgloss.Width(counts) - 1
+	if room < 8 {
+		room = textWidth
 	}
+	parts := wrapWidth(path, room)
+	if len(parts) == 0 {
+		parts = []string{path}
+	}
+	gap := textWidth - lipgloss.Width(parts[0]) - lipgloss.Width(counts)
 	if gap < 1 {
 		gap = 1
 	}
-	title := toolSuccessStyle.Bold(true).Render(header) + strings.Repeat(" ", gap) + diffAddStyle.Render(fmt.Sprintf("+%d", added)) + " " + diffDelStyle.Render(fmt.Sprintf("−%d", deleted))
+	title := toolSuccessStyle.Bold(true).Render(parts[0]) + strings.Repeat(" ", gap) + diffAddStyle.Render(fmt.Sprintf("+%d", added)) + " " + diffDelStyle.Render(fmt.Sprintf("−%d", deleted))
+	var headerLines []string
+	headerLines = append(headerLines, title)
+	for _, part := range parts[1:] {
+		headerLines = append(headerLines, toolSuccessStyle.Bold(true).Render(part))
+	}
 	var body []string
-	body = append(body, title)
+	body = append(body, headerLines...)
 	body = append(body, dividerStyle.Render(strings.Repeat("─", textWidth)))
 	if len(rows) == 0 {
 		body = append(body, toolDimStyle.Render("(empty)"))

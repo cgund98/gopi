@@ -14,6 +14,8 @@ import (
 )
 
 const helpText = `/agent, /ask, /plan, and /mode <name> switch the session mode
+/model <name> sets the model for the active mode
+/compact summarizes earlier turns
 /sessions opens the saved-chat list
 /plans opens saved plans
 /review walks file edits from this chat
@@ -49,6 +51,7 @@ func (m *chatModel) persistSession() tea.Cmd {
 	sessions := m.sessions
 	titleFn := m.chatTitle
 	ctx := m.ctx
+	models := m.modelOverrides
 	return func() tea.Msg {
 		messages, err := store.Load(ctx, id)
 		if err != nil || len(messages) == 0 {
@@ -71,6 +74,7 @@ func (m *chatModel) persistSession() tea.Cmd {
 			Updated:   time.Now().UTC(),
 			Messages:  messages,
 			Review:    review,
+			Models:    models,
 		})
 		return sessionSavedMsg{Title: title, Review: review, Err: err}
 	}
@@ -241,7 +245,7 @@ func (m *chatModel) renderSessions() string {
 	}
 	if m.sessionErr != "" {
 		b.WriteString("\n\n")
-		b.WriteString(errStyle.Render(m.sessionErr))
+		b.WriteString(wrapStyled(m.sessionErr, errStyle, m.width))
 	}
 	b.WriteString("\n\n")
 	if m.sessionConfirm && m.sessionCursor > 0 && m.sessionCursor-1 < len(m.sessionRows) {

@@ -46,7 +46,13 @@ type chatModel struct {
 	systemPrompt     string
 	mode             app.Mode
 	switchMode       func(app.Mode) error
+	setModel         func(string) error
+	summarize        func(context.Context, string) (gogent.Message, error)
 	prepareBuild     func() error
+	modelOverrides   map[string]string
+	completeOpen     bool
+	completeIndex    int
+	completeItems    []completion
 	runCancel        context.CancelFunc
 	planOpen         bool
 	planPath         string
@@ -247,6 +253,35 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.persistSession()
 
+	case compactDoneMsg:
+		m.busy = false
+		if msg.Err != nil {
+			m.err = msg.Err
+			m.status = msg.Err.Error()
+			return m, nil
+		}
+		if err := m.store.DeleteAllMessages(m.ctx, m.chatID); err != nil {
+			m.err = err
+			m.status = err.Error()
+			return m, nil
+		}
+		if err := m.store.AddMessages(m.ctx, m.chatID, msg.Summary); err != nil {
+			m.err = err
+			m.status = err.Error()
+			return m, nil
+		}
+		if len(msg.Keep) > 0 {
+			if err := m.store.AddMessages(m.ctx, m.chatID, msg.Keep...); err != nil {
+				m.err = err
+				m.status = err.Error()
+				return m, nil
+			}
+		}
+		m.err = nil
+		m.status = "Compacted earlier turns"
+		m.afterStoreRefresh()
+		return m, m.persistSession()
+
 	case sessionSavedMsg:
 		if msg.Title != "" {
 			m.sessionTitle = msg.Title
@@ -279,6 +314,16 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.busy && (msg.String() == "esc" || msg.String() == "ctrl+c") {
 			m.cancelRun()
 			return m, nil
+		}
+		if !m.busy && !m.inApprovalMode() && (msg.String() == "esc" || msg.String() == "ctrl+c") {
+			if m.input.Value() != "" {
+				m.input.SetValue("")
+				m.completeOpen = false
+				return m, nil
+			}
+			if msg.String() == "esc" {
+				return m, tea.Quit
+			}
 		}
 		if m.handleGlobalKeys(msg) {
 			return m, tea.Quit
@@ -365,12 +410,27 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "up", "down", "pgup", "pgdown", "home", "end":
+		if m.completeOpen && (msg.String() == "up" || msg.String() == "down") {
+			delta := 1
+			if msg.String() == "up" {
+				delta = -1
+			}
+			m.moveComplete(delta)
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.transcriptVP, cmd = m.transcriptVP.Update(msg)
 		m.followChatEnd = m.transcriptVP.AtBottom()
 		return m, cmd
+	case "tab":
+		if m.completeOpen {
+			m.acceptComplete()
+			return m, nil
+		}
+		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
+		m.completeOpen = false
 		if text == "" {
 			return m, nil
 		}
@@ -393,7 +453,19 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if text == "/plans" {
 			m.input.SetValue("")
+			m.completeOpen = false
 			m.openPlans()
+			return m, nil
+		}
+		if text == "/compact" {
+			m.input.SetValue("")
+			m.completeOpen = false
+			return m, m.compact()
+		}
+		if strings.HasPrefix(text, "/model") {
+			m.input.SetValue("")
+			m.completeOpen = false
+			m.handleModel(text)
 			return m, nil
 		}
 		if mode, command, ok := app.ParseModeCommand(text); command {
@@ -430,6 +502,7 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.syncComplete()
 	return m, cmd
 }
 
@@ -450,7 +523,7 @@ func (m *chatModel) refreshTranscript(followEnd bool) {
 	if m.inApprovalMode() {
 		selected = m.selectedTool
 	}
-	syncTranscriptViewport(&m.transcriptVP, m.messages, m.toolCards, selected, followEnd)
+	syncTranscriptViewport(&m.transcriptVP, m.messages, m.toolCards, selected, followEnd, !m.busy && !m.inApprovalMode())
 }
 
 const footerBufferLines = 1
@@ -460,13 +533,18 @@ func (m *chatModel) footerLines() int {
 	if m.inApprovalMode() {
 		footer += 12
 	} else if m.status != "" || m.err != nil {
-		footer += 2
+		n := len(strings.Split(wrapBlock(m.status, m.width), "\n"))
+		if n < 1 {
+			n = 1
+		}
+		footer += 1 + n
 	} else {
 		footer++
 	}
 	if m.pendingReviewCount() > 0 {
 		footer += 2
 	}
+	footer += m.completeLines()
 	return footer
 }
 
@@ -542,6 +620,10 @@ func (m *chatModel) View() string {
 	} else if m.busy {
 		b.WriteString(renderBusyLine(modePrompt(m.mode)+m.spinner.View()+statusStyle.Render(" Thinking"), helpStyle.Render("esc cancel"), m.width))
 	} else {
+		if menu := m.renderComplete(); menu != "" {
+			b.WriteString(menu)
+			b.WriteByte('\n')
+		}
 		b.WriteString(m.input.View())
 	}
 
@@ -555,17 +637,21 @@ func (m *chatModel) View() string {
 	}
 	if m.status != "" || m.err != nil {
 		b.WriteByte('\n')
+		style := statusStyle
 		if m.err != nil {
-			b.WriteString(errStyle.Render(m.status))
-		} else {
-			b.WriteString(statusStyle.Render(m.status))
+			style = errStyle
 		}
+		b.WriteString(wrapStyled(m.status, style, m.width))
 	}
 
 	b.WriteByte('\n')
 	b.WriteString(renderDivider(m.width))
 	b.WriteByte('\n')
-	b.WriteString(renderStatusSuffix(m.modelName, m.workspacePath, contextPercent(m.systemPrompt, m.messages, m.input.Value()), m.busy, m.width))
+	usage := ""
+	if !m.busy && !m.inApprovalMode() {
+		usage = formatUsageStatus(m.modelName, m.messages)
+	}
+	b.WriteString(renderStatusSuffix(m.modelName, m.workspacePath, usage, contextPercent(m.modelName, m.systemPrompt, m.messages, m.input.Value()), m.busy, m.width))
 
 	return b.String()
 }
@@ -588,12 +674,15 @@ func renderBusyLine(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-func renderStatusSuffix(model, workspace string, contextPct int, thinking bool, width int) string {
+func renderStatusSuffix(model, workspace, usage string, contextPct int, thinking bool, width int) string {
 	if model == "" {
 		model = "model"
 	}
 	left := displayWorkspace(workspace)
 	right := fmt.Sprintf("%s | %d%%", model, contextPct)
+	if usage != "" {
+		right += " | " + usage
+	}
 	if thinking {
 		right += " | thinking"
 	}
@@ -625,24 +714,6 @@ func modePrompt(mode app.Mode) string {
 		style = agentModeStyle
 	}
 	return style.Render(label) + promptStyle.Render(" > ")
-}
-
-const contextWindowTokens = 128000
-
-func contextPercent(system string, messages []gogent.Message, draft string) int {
-	chars := len(system) + len(draft)
-	for _, message := range messages {
-		chars += len(message.Content)
-		for _, call := range message.ToolCalls {
-			chars += len(call.ToolName) + len(call.Args) + len(call.Result)
-		}
-	}
-	tokens := chars / 4
-	percent := tokens * 100 / contextWindowTokens
-	if percent > 100 {
-		return 100
-	}
-	return percent
 }
 
 func displayWorkspace(path string) string {

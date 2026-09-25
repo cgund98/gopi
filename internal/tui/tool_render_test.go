@@ -124,7 +124,7 @@ func TestReadAndGrepHeadlines(t *testing.T) {
 		t.Fatalf("find headline = %q", got)
 	}
 	shell := toolCardView{ToolName: "shell", Args: json.RawMessage(`{"command":"go test"}`)}
-	if got := toolHeadline(shell); got != "shell go test" {
+	if got := toolHeadline(shell); got != "$ go test" {
 		t.Fatalf("shell headline = %q", got)
 	}
 }
@@ -142,7 +142,7 @@ func TestShellCommandWraps(t *testing.T) {
 			t.Fatalf("line width %d exceeds 40: %q", w, line)
 		}
 	}
-	if !strings.HasPrefix(lines[0], "> shell echo") {
+	if !strings.HasPrefix(lines[0], "> $ echo") {
 		t.Fatalf("first line = %q", lines[0])
 	}
 
@@ -220,7 +220,7 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		Args:     json.RawMessage(`{"command":"cat .env","read_paths":[".env"]}`),
 		Reason:   "Elevated file access: read /work/.env",
 	}, 60))
-	if !strings.Contains(shell, "shell cat .env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
+	if !strings.Contains(shell, "$ cat .env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
 		t.Fatalf("shell prompt = %q", shell)
 	}
 

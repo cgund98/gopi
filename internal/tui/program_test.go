@@ -16,6 +16,7 @@ import (
 
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
+	"github.com/cgund98/gopi/internal/models"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/tools"
@@ -24,22 +25,22 @@ import (
 )
 
 func TestStatusSuffixShowsModelWorkspaceAndThinking(t *testing.T) {
-	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", 12, false, 48)), " ")
+	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, false, 48)), " ")
 	if !strings.HasPrefix(idle, "/tmp/gopi") || !strings.HasSuffix(idle, "gpt-6-sol | 12%") || strings.Contains(idle, "thinking") {
 		t.Fatalf("idle suffix = %q", idle)
 	}
-	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", 12, true, 48)), " ")
+	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, true, 48)), " ")
 	if !strings.HasPrefix(busy, "/tmp/gopi") || !strings.HasSuffix(busy, "gpt-6-sol | 12% | thinking") {
 		t.Fatalf("busy suffix = %q", busy)
 	}
 }
 
 func TestContextPercentUsesTranscript(t *testing.T) {
-	if got := contextPercent("", nil, ""); got != 0 {
+	if got := contextPercent("", "", nil, ""); got != 0 {
 		t.Fatalf("empty = %d", got)
 	}
-	messages := []gogent.Message{{Content: strings.Repeat("a", contextWindowTokens*4)}}
-	if got := contextPercent("", messages, ""); got != 100 {
+	messages := []gogent.Message{{Content: strings.Repeat("a", models.ContextWindow("")*4)}}
+	if got := contextPercent("", "", messages, ""); got != 100 {
 		t.Fatalf("full = %d", got)
 	}
 }
@@ -119,6 +120,27 @@ func TestQTypesIntoPrompt(t *testing.T) {
 	chat = updated.(*chatModel)
 	if chat.input.Value() != "q" {
 		t.Fatalf("prompt = %q", chat.input.Value())
+	}
+}
+
+func TestEscClearsDraftAndQuitsWhenEmpty(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.input.SetValue("draft")
+	updated, cmd := chat.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.input.Value() != "" {
+		t.Fatalf("esc value = %q cmd = %v", chat.input.Value(), cmd)
+	}
+	chat.input.SetValue("/model")
+	chat.syncComplete()
+	updated, cmd = chat.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.input.Value() != "" || chat.completeOpen {
+		t.Fatalf("ctrl+c value = %q open = %v cmd = %v", chat.input.Value(), chat.completeOpen, cmd)
+	}
+	_, cmd = chat.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("esc on an empty prompt should quit")
 	}
 }
 
@@ -208,7 +230,7 @@ func TestHelpAndSessionsDoNotRunAgent(t *testing.T) {
 	chat.input.SetValue("/help")
 	updated, _ := chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	chat = updated.(*chatModel)
-	if chat.busy || !strings.Contains(chat.status, "/agent") || !strings.Contains(chat.status, "/ask") || !strings.Contains(chat.status, "/plan") || !strings.Contains(chat.status, "/sessions") || !strings.Contains(chat.status, "/plans") || !strings.Contains(chat.status, "/review") || !strings.Contains(chat.status, "/help") || !strings.Contains(chat.status, "/mode") {
+	if chat.busy || !strings.Contains(chat.status, "/agent") || !strings.Contains(chat.status, "/ask") || !strings.Contains(chat.status, "/plan") || !strings.Contains(chat.status, "/sessions") || !strings.Contains(chat.status, "/plans") || !strings.Contains(chat.status, "/review") || !strings.Contains(chat.status, "/help") || !strings.Contains(chat.status, "/mode") || !strings.Contains(chat.status, "/model") || !strings.Contains(chat.status, "/compact") {
 		t.Fatalf("help status = %q busy = %v", chat.status, chat.busy)
 	}
 

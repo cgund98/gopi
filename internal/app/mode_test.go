@@ -139,3 +139,44 @@ func TestExtraToolStaysOnItsMode(t *testing.T) {
 		t.Fatal("duplicate built-in name was accepted")
 	}
 }
+
+func TestSetModelKeepsOtherModes(t *testing.T) {
+	root, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := New(config.Config{
+		Model:         "gpt-4o-mini",
+		MaxIterations: 2,
+		OpenAIAPIKey:  "test-key",
+		HomeDir:       t.TempDir(),
+		Network:       "deny",
+	}, root, trust.WorkspaceTrusted, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetMode(ModeAsk); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetModel("gpt-4o"); err != nil {
+		t.Fatal(err)
+	}
+	if session.ActiveModel() != "gpt-4o" {
+		t.Fatalf("ask model = %q", session.ActiveModel())
+	}
+	if err := session.SetMode(ModeAgent); err != nil {
+		t.Fatal(err)
+	}
+	if session.ActiveModel() != "gpt-4o-mini" {
+		t.Fatalf("agent model = %q", session.ActiveModel())
+	}
+	if err := session.SetMode(ModeAsk); err != nil {
+		t.Fatal(err)
+	}
+	if session.ActiveModel() != "gpt-4o" {
+		t.Fatalf("ask model after return = %q", session.ActiveModel())
+	}
+	if err := session.SetModel("nope"); err == nil {
+		t.Fatal("unlisted model was accepted")
+	}
+}

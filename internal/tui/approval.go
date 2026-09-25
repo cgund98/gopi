@@ -148,7 +148,7 @@ func renderApprovalPrompt(pending gogent.PendingToolCall, width int) string {
 	b.WriteString(renderToolLine(toolHeadline(card), toolCardPending, true, width))
 	b.WriteString("\n\n")
 	if pending.Reason != "" {
-		b.WriteString(statusStyle.Render(pending.Reason))
+		b.WriteString(wrapStyled(pending.Reason, statusStyle, width))
 		b.WriteByte('\n')
 	}
 	if body := renderApprovalBody(card, width); body != "" {

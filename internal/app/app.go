@@ -10,6 +10,7 @@ import (
 	"github.com/cgund98/gogent/openai"
 
 	"github.com/cgund98/gopi/internal/config"
+	"github.com/cgund98/gopi/internal/models"
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/prompt"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
@@ -44,6 +45,7 @@ type Session struct {
 	registries map[Mode]*gogent.ToolRegistry
 	extra      map[Mode][]gogent.Tool
 	models     *modelFactory
+	overrides  map[Mode]string
 	active     string
 	basePrompt string
 }
@@ -81,6 +83,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		registries: map[Mode]*gogent.ToolRegistry{},
 		extra:      extra,
 		models:     newModelFactory(cfg),
+		overrides:  map[Mode]string{},
 		basePrompt: text,
 	}
 	delegate := &tools.Delegate{
@@ -143,6 +146,29 @@ func (s *Session) ActiveModel() string {
 	return s.active
 }
 
+// ModelOverrides returns the per-mode names chosen with /model.
+func (s *Session) ModelOverrides() map[string]string {
+	if len(s.overrides) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(s.overrides))
+	for mode, name := range s.overrides {
+		out[string(mode)] = name
+	}
+	return out
+}
+
+// SetModelOverrides restores names chosen in an earlier session.
+func (s *Session) SetModelOverrides(overrides map[string]string) {
+	s.overrides = map[Mode]string{}
+	for mode, name := range overrides {
+		if name == "" {
+			continue
+		}
+		s.overrides[Mode(mode)] = name
+	}
+}
+
 // SetMode switches the registry, prompt prefix, and that mode's model.
 func (s *Session) SetMode(mode Mode) error {
 	switch mode {
@@ -150,12 +176,35 @@ func (s *Session) SetMode(mode Mode) error {
 	default:
 		return fmt.Errorf("unknown mode %q", mode)
 	}
-	return s.apply(mode, s.Config.ModelFor(string(mode)))
+	return s.apply(mode, s.modelFor(mode))
+}
+
+// SetModel sets the model used by the active mode for the rest of this session.
+func (s *Session) SetModel(name string) error {
+	if _, _, err := models.Parse(name); err != nil {
+		return err
+	}
+	if s.overrides == nil {
+		s.overrides = map[Mode]string{}
+	}
+	s.overrides[s.Mode] = name
+	return s.apply(s.Mode, name)
 }
 
 // SetBuild selects the agent registry and the build model for one plan turn.
 func (s *Session) SetBuild() error {
-	return s.apply(ModeAgent, s.Config.BuildModelName())
+	name := s.Config.BuildModel
+	if name == "" {
+		name = s.modelFor(ModeAgent)
+	}
+	return s.apply(ModeAgent, name)
+}
+
+func (s *Session) modelFor(mode Mode) string {
+	if name := s.overrides[mode]; name != "" {
+		return name
+	}
+	return s.Config.ModelFor(string(mode))
 }
 
 func (s *Session) apply(mode Mode, name string) error {
@@ -191,6 +240,22 @@ func (s *Session) ChatTitle(ctx context.Context, userText, assistantText string)
 		return "", err
 	}
 	return strings.TrimSpace(message.Content), nil
+}
+
+// Summarize asks the active model for a summary of earlier turns. The reply carries that turn's usage.
+func (s *Session) Summarize(ctx context.Context, transcript string) (gogent.Message, error) {
+	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Summarize the earlier conversation. Keep decisions, file paths, and unfinished work. Reply with the summary only.")
+	if err != nil {
+		return gogent.Message{}, err
+	}
+	message, err := model.GenerateResponse(ctx, []gogent.Message{
+		gogent.NewUserMessage(transcript),
+	})
+	if err != nil {
+		return gogent.Message{}, err
+	}
+	message.Content = "Summary of earlier turns:\n" + strings.TrimSpace(message.Content)
+	return message, nil
 }
 
 // ParseModeCommand reports whether text is a mode command and which mode it names.

@@ -339,7 +339,7 @@ func (m *chatModel) renderReview() string {
 	}
 	bodyH := m.height - 2
 	if m.reviewErr != "" {
-		bodyH--
+		bodyH -= len(strings.Split(wrapBlock(m.reviewErr, m.width), "\n"))
 	}
 	if bodyH < 8 {
 		bodyH = 8
@@ -352,7 +352,7 @@ func (m *chatModel) renderReview() string {
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, right))
 	if m.reviewErr != "" {
 		b.WriteByte('\n')
-		b.WriteString(errStyle.Render(m.reviewErr))
+		b.WriteString(wrapStyled(m.reviewErr, errStyle, m.width))
 	}
 	b.WriteByte('\n')
 	help := "up down file · tab viewer · n p hunk · a approve · x reject · esc back"
@@ -409,12 +409,19 @@ func (m *chatModel) renderReviewFile(width, height int) string {
 	if nameWidth < 1 {
 		nameWidth = 1
 	}
-	name := m.reviewPaneTitle(truncateWidth(entry.Path, nameWidth), m.reviewPane == reviewPaneFile)
+	nameParts := wrapWidth(entry.Path, nameWidth)
+	if len(nameParts) == 0 {
+		nameParts = []string{""}
+	}
+	name := m.reviewPaneTitle(nameParts[0], m.reviewPane == reviewPaneFile)
 	gap := width - lipgloss.Width(name) - lipgloss.Width(counts)
 	if gap < 1 {
 		gap = 1
 	}
 	header := name + strings.Repeat(" ", gap) + counts
+	for _, part := range nameParts[1:] {
+		header += "\n" + m.reviewPaneTitle(part, m.reviewPane == reviewPaneFile)
+	}
 	return header + "\n" + strings.Join(fileLines, "\n")
 }
 
@@ -441,7 +448,7 @@ func (m *chatModel) renderReviewTree(files []session.ReviewEntry, width, height 
 		}
 		body = strings.Join(parts, "\n")
 	}
-	header := m.reviewPaneTitle(truncateWidth("Files", width), m.reviewPane == reviewPaneTree)
+	header := m.reviewPaneTitle(strings.Join(wrapWidth("Files", width), "\n"), m.reviewPane == reviewPaneTree)
 	return header + "\n" + body
 }
 
@@ -475,7 +482,7 @@ func (d *reviewDir) insert(parts []string, index int) {
 func (d *reviewDir) write(lines *[]string, depth, width, cursor int) {
 	indent := strings.Repeat("  ", depth)
 	for _, file := range d.files {
-		line := truncateWidth(indent+file.name, width)
+		line := strings.Join(wrapWidth(indent+file.name, width), "\n")
 		if file.index == cursor {
 			line = agentModeStyle.Render(line)
 		}
@@ -485,7 +492,7 @@ func (d *reviewDir) write(lines *[]string, depth, width, cursor int) {
 		if i > 0 || len(d.files) > 0 {
 			*lines = append(*lines, "")
 		}
-		*lines = append(*lines, toolDimStyle.Render(truncateWidth(indent+child.name+"/", width)))
+		*lines = append(*lines, toolDimStyle.Render(strings.Join(wrapWidth(indent+child.name+"/", width), "\n")))
 		child.write(lines, depth+1, width, cursor)
 	}
 }
@@ -569,7 +576,20 @@ func renderReviewLine(oldNo, newNo, gutter int, sign, text string, style lipglos
 	if textWidth < 1 {
 		textWidth = 1
 	}
-	return prefix + style.Render(truncateWidth(text, textWidth))
+	parts := wrapWidth(text, textWidth)
+	if len(parts) == 0 {
+		parts = []string{""}
+	}
+	pad := strings.Repeat(" ", lipgloss.Width(prefix))
+	var lines []string
+	for i, part := range parts {
+		if i == 0 {
+			lines = append(lines, prefix+style.Render(part))
+			continue
+		}
+		lines = append(lines, pad+style.Render(part))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func splitFileLines(text string) []string {
