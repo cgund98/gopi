@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -359,5 +360,80 @@ func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
 	}
 	if strings.Contains(string(audit), secret) || !strings.Contains(string(audit), "secrets=DEPLOY_TOKEN") {
 		t.Fatalf("audit = %s", audit)
+	}
+}
+
+func TestShellDropsHostOnlySecrets(t *testing.T) {
+	secrets := map[string]string{"gcal_token": "x", "DEPLOY_TOKEN": "y"}
+	got := injectedSecretNames(secrets, []string{"gcal_token", "DEPLOY_TOKEN"}, []string{"gcal_token"})
+	if len(got) != 1 || got[0] != "DEPLOY_TOKEN" {
+		t.Fatalf("injected = %#v", got)
+	}
+}
+
+func TestShellProfileDeniesSecretFiles(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("sandboxed shell is macOS only")
+	}
+	token := filepath.Join(t.TempDir(), "gcal_token.json")
+	tool := &Shell{Root: openTemp(t), HomeDir: t.TempDir(), SecretFiles: []string{token}}
+	var saw sandbox.Profile
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		saw = profile
+		return sandbox.Result{Stdout: "ok\n"}, nil
+	}
+	defer func() { launchCommand = orig }()
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, pattern := range saw.DenyRead {
+		if regexp.MustCompile(pattern).MatchString(token) {
+			return
+		}
+	}
+	t.Fatalf("deny-read list misses %s: %#v", token, saw.DenyRead)
+}
+
+func TestShellProfileIncludesSessionGrant(t *testing.T) {
+	root := openTemp(t)
+	outside := t.TempDir()
+	grants := &ReadGrants{}
+	grants.Add(outside)
+	tool := &Shell{Root: root, HomeDir: t.TempDir(), Grants: grants}
+	reads := sessionReads(grants, false)
+	if len(reads) != 1 || reads[0] != outside {
+		t.Fatalf("reads = %#v", reads)
+	}
+	if sessionReads(grants, true) != nil {
+		t.Fatal("unsandboxed profile included session reads")
+	}
+	body, err := sandbox.SeatbeltProfile(sandbox.Profile{
+		SessionReads: reads,
+		DenyRead:     []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$"},
+		ExtraReads:   []string{filepath.Join(outside, ".env")},
+		Network:      sandbox.NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, outside) {
+		t.Fatalf("profile missing grant:\n%s", body)
+	}
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	var saw sandbox.Profile
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		saw = profile
+		return sandbox.Result{Stdout: "ok\n"}, nil
+	}
+	defer func() { launchCommand = orig }()
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(saw.SessionReads) != 1 || saw.SessionReads[0] != outside {
+		t.Fatalf("profile reads = %#v", saw.SessionReads)
 	}
 }

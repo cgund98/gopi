@@ -18,7 +18,7 @@ const (
 	dirName          = ".gopi"
 	configFileName   = "config.toml"
 	systemPromptFile = "system.md"
-	defaultModel     = "gpt-4o-mini"
+	defaultModel     = "gpt-5.6-terra"
 	defaultMaxIter   = 10
 	homeDirEnv       = "GOPI_HOME"
 	requiredDirMode  = os.FileMode(0o700)
@@ -79,6 +79,8 @@ type Config struct {
 	KimiAPIKey         string
 	HomeDir            string
 	Secrets            map[string]string
+	SecretFiles        map[string]string
+	HostOnly           []string
 	Network            string
 	AllowHosts         []string
 	DenyHosts          []string
@@ -169,7 +171,7 @@ func Load(dir string) (Config, error) {
 		return Config{}, err
 	}
 
-	broker, err := gopisecrets.Load(dir)
+	broker, secretFiles, err := gopisecrets.Load(dir)
 	if err != nil {
 		return Config{}, err
 	}
@@ -205,6 +207,7 @@ func Load(dir string) (Config, error) {
 		KimiAPIKey:         kimiKey,
 		HomeDir:            dir,
 		Secrets:            broker,
+		SecretFiles:        secretFiles,
 		Network:            file.Sandbox.Network,
 		AllowHosts:         file.Sandbox.Hosts.Allow,
 		DenyHosts:          file.Sandbox.Hosts.Deny,

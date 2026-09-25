@@ -6,12 +6,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/cgund98/gogent"
 
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/session"
+	"github.com/cgund98/gopi/internal/toolview"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/tui"
 	"github.com/cgund98/gopi/internal/workspace"
@@ -26,6 +28,17 @@ const (
 	ModePlan  Mode = app.ModePlan
 )
 
+// ToolRenderer is optional. A tool passed to WithTool or WithToolFactory that also
+// implements it controls its headline, approval body, and result panel. An empty
+// headline or a zero ToolView keeps the default rendering.
+type ToolRenderer = toolview.Renderer
+
+// ToolView is plain text that gopi frames, styles, and wraps.
+type ToolView = toolview.View
+
+// ToolField is one labeled row in a ToolView.
+type ToolField = toolview.Field
+
 // Option changes how Run starts the session.
 type Option func(*options)
 
@@ -33,6 +46,83 @@ type options struct {
 	workspace string
 	resume    bool
 	tools     map[Mode][]gogent.Tool
+	factories []toolFactory
+}
+
+type toolFactory struct {
+	mode  Mode
+	build func(ToolEnv) (gogent.Tool, error)
+}
+
+// ToolEnv is what a tool factory may read while Run builds the tool.
+type ToolEnv struct {
+	// Workspace is the canonical workspace root.
+	Workspace string
+
+	secrets map[string]string
+	files   map[string]string
+	used    map[string]bool
+}
+
+// Secret returns a value from ~/.gopi/secrets.toml, or the contents of the file
+// it references. A missing name is an error, and the name becomes host-only:
+// shell calls can never receive it.
+func (e ToolEnv) Secret(name string) (string, error) {
+	value, ok := e.secrets[name]
+	if !ok {
+		return "", fmt.Errorf("secret %s is missing from ~/.gopi/secrets.toml", name)
+	}
+	e.used[name] = true
+	return value, nil
+}
+
+// SecretPath returns the file a secret references, for a tool that must write the
+// file back (for example a refreshed OAuth token). A string secret is an error.
+func (e ToolEnv) SecretPath(name string) (string, error) {
+	path, ok := e.files[name]
+	if !ok {
+		if _, exists := e.secrets[name]; exists {
+			return "", fmt.Errorf("secret %s is a string, not a { file = \"path\" } reference", name)
+		}
+		return "", fmt.Errorf("secret %s is missing from ~/.gopi/secrets.toml", name)
+	}
+	e.used[name] = true
+	return path, nil
+}
+
+// WithToolFactory adds a tool built at startup from a ToolEnv. Use it when the
+// tool needs secrets from ~/.gopi/secrets.toml. An error from factory stops Run.
+// Like WithTool, the tool is added to one mode and not to the delegate child.
+func WithToolFactory(mode Mode, factory func(ToolEnv) (gogent.Tool, error)) Option {
+	return func(o *options) {
+		o.factories = append(o.factories, toolFactory{mode: mode, build: factory})
+	}
+}
+
+// buildTools runs the factories and returns every custom tool by mode, plus the
+// secret names the factories read.
+func buildTools(cfg config.Config, workspacePath string, o options) (map[Mode][]gogent.Tool, []string, error) {
+	out := map[Mode][]gogent.Tool{}
+	for mode, list := range o.tools {
+		out[mode] = append(out[mode], list...)
+	}
+	env := ToolEnv{Workspace: workspacePath, secrets: cfg.Secrets, files: cfg.SecretFiles, used: map[string]bool{}}
+	for _, factory := range o.factories {
+		tool, err := factory.build(env)
+		if err != nil {
+			return nil, nil, fmt.Errorf("build %s tool: %w", factory.mode, err)
+		}
+		if tool == nil {
+			return nil, nil, fmt.Errorf("build %s tool: factory returned no tool", factory.mode)
+		}
+		out[factory.mode] = append(out[factory.mode], tool)
+	}
+	names := make([]string, 0, len(env.used))
+	for name := range env.used {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return out, names, nil
 }
 
 // WithWorkspace uses dir instead of the current directory.
@@ -103,7 +193,13 @@ func Run(ctx context.Context, opts ...Option) error {
 		return err
 	}
 
-	session, err := app.New(cfg, root, decisions.Lookup(root.Path), options.tools)
+	custom, hostOnly, err := buildTools(cfg, root.Path, options)
+	if err != nil {
+		return err
+	}
+	cfg.HostOnly = hostOnly
+
+	session, err := app.New(cfg, root, decisions.Lookup(root.Path), custom)
 	if err != nil {
 		return err
 	}

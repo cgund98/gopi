@@ -20,6 +20,7 @@ func composerCommands() []completion {
 		{insert: "/mode", label: "/mode <name>", detail: "switch mode"},
 		{insert: "/model", label: "/model <name>", detail: "set the model for this mode"},
 		{insert: "/compact", label: "/compact", detail: "summarize earlier turns"},
+		{insert: "/mouse", label: "/mouse [on|off]", detail: "toggle mouse capture"},
 		{insert: "/sessions", label: "/sessions", detail: "open saved chats"},
 		{insert: "/plans", label: "/plans", detail: "open saved plans"},
 		{insert: "/review", label: "/review", detail: "review file edits"},
@@ -68,6 +69,11 @@ func completionsFor(text string) []completion {
 			{insert: "/mode agent", label: "/mode agent", detail: "Agent"},
 			{insert: "/mode ask", label: "/mode ask", detail: "Ask"},
 			{insert: "/mode plan", label: "/mode plan", detail: "Plan"},
+		}, arg)
+	case "/mouse":
+		return filterCompletions([]completion{
+			{insert: "/mouse on", label: "/mouse on", detail: "wheel scrolls gopi"},
+			{insert: "/mouse off", label: "/mouse off", detail: "terminal selects text"},
 		}, arg)
 	case "/model":
 		var items []completion

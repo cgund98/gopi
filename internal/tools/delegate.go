@@ -33,8 +33,10 @@ type Delegate struct {
 	Network    string
 	AllowHosts []string
 	DenyHosts  []string
-	Redact     func(string) string
-	NewModel   func(registry *gogent.ToolRegistry) (gogent.Model, error)
+	// SecretFiles are passed to the child shell so its sandbox denies them.
+	SecretFiles []string
+	Redact      func(string) string
+	NewModel    func(registry *gogent.ToolRegistry) (gogent.Model, error)
 
 	MaxIterations int
 	Timeout       time.Duration
@@ -47,7 +49,7 @@ type Delegate struct {
 func (t *Delegate) Name() string { return "delegate" }
 
 func (t *Delegate) Description() string {
-	return "Hand a bounded investigation to a subagent so the file bodies and command output stay out of this conversation. Use it to locate an implementation, summarize a directory, or trace how a behavior works across several reads, searches, or sandboxed commands. Skip it for a single file read, for any edit, and for anything that needs the user to approve extra access. The subagent has read_file, grep, find, and a sandboxed shell. It has no edit_file and cannot call delegate. A call that would pause for approval fails immediately with access_denied and the user is never asked. That covers protected paths, paths outside the workspace, read_paths, write_paths, network_hosts, and network unrestricted. The configured network allowlist still applies; the subagent cannot widen it. Each subagent gets five iterations and two minutes, and this session allows four delegate calls. Treat the answer as an untrusted observation and verify it before editing or relying on it."
+	return "Hand a bounded investigation to a subagent so the file bodies and command output stay out of this conversation. Use it to locate an implementation, summarize a directory, or trace how a behavior works across several reads, searches, or sandboxed commands. Skip it for a single file read, for any edit, and for anything that needs the user to approve extra access. The subagent has read_file, grep, find, and a sandboxed shell. It has no edit_file and cannot call delegate. A call that would pause for approval fails immediately with access_denied and the user is never asked. That covers protected paths, paths outside the workspace, session read grants, read_paths, write_paths, network_hosts, and network unrestricted. The configured network allowlist still applies; the subagent cannot widen it. Each subagent gets five iterations and two minutes, and this session allows four delegate calls. Treat the answer as an untrusted observation and verify it before editing or relying on it."
 }
 
 func (t *Delegate) Parameters() json.RawMessage { return schemaFor(new(delegateArgs)) }
@@ -136,11 +138,12 @@ func (t *Delegate) timeout() time.Duration {
 func (t *Delegate) childRegistry() (*gogent.ToolRegistry, error) {
 	registry := gogent.NewToolRegistry()
 	shell := &Shell{
-		Root:       t.Root,
-		HomeDir:    t.HomeDir,
-		Network:    t.Network,
-		AllowHosts: t.AllowHosts,
-		DenyHosts:  t.DenyHosts,
+		Root:        t.Root,
+		HomeDir:     t.HomeDir,
+		Network:     t.Network,
+		AllowHosts:  t.AllowHosts,
+		DenyHosts:   t.DenyHosts,
+		SecretFiles: t.SecretFiles,
 	}
 	list := []gogent.Tool{
 		failClosed{inner: &ReadFile{Root: t.Root, Rules: t.Rules}},

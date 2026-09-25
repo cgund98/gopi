@@ -19,6 +19,9 @@ func TestFactorySelectsKimi(t *testing.T) {
 	if model.SystemPrompt() != "sys" {
 		t.Fatalf("prompt = %q", model.SystemPrompt())
 	}
+	if _, err := factory.New("kimi/kimi-k2.6-nothink", gogent.NewToolRegistry(), ""); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := factory.New("kimi/kimi-k3", gogent.NewToolRegistry(), ""); err == nil {
 		t.Fatal("expected unlisted model to fail")
 	}

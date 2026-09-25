@@ -18,7 +18,7 @@ You are in Plan mode. Explore with read-only tools, then save the plan with writ
 	default:
 		return strings.TrimSpace(`
 <mode>
-You are in Agent mode. You may read, edit, and run commands. When the user asks you to plan, do not start the work. Ask them to switch to Plan mode with /plan. Plan mode writes the plan.
+You are in Agent mode. You may read, edit, and run commands. Apply requested changes with edit_file instead of showing the code in your reply. When the user asks you to plan, do not start the work. Ask them to switch to Plan mode with /plan. Plan mode writes a new plan. To revise a plan already under .gopi/plans, call write_plan with that path, the full body, and the todos.
 </mode>`)
 	}
 }

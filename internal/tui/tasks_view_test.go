@@ -48,7 +48,7 @@ func TestFinishedTasksRenderOnceInTranscript(t *testing.T) {
 		{ToolCallID: "c2", ToolName: "tasks", Result: second},
 		{ToolCallID: "c3", ToolName: "tasks", Result: third},
 	}
-	plain := stripANSI(renderTranscript(messages, cards, -1, 80, false))
+	plain := stripANSI(renderTranscript(messages, cards, -1, 80, false, nil))
 	if strings.Count(plain, "done Add the tool") != 1 || strings.Count(plain, "done Wire it") != 1 {
 		t.Fatalf("transcript = %q", plain)
 	}

@@ -17,7 +17,7 @@ import (
 
 type editFileArgs struct {
 	Path string `json:"path" jsonschema:"description=Path relative to the workspace root"`
-	Old  string `json:"old" jsonschema:"description=Exact text to replace. Empty creates a new file."`
+	Old  string `json:"old" jsonschema:"description=Exact text to replace. Empty creates a new file and is refused when the file exists."`
 	New  string `json:"new" jsonschema:"description=Replacement text"`
 }
 
@@ -64,7 +64,7 @@ func (t *EditFile) Seed(paths []string) {
 func (t *EditFile) Name() string { return "edit_file" }
 
 func (t *EditFile) Description() string {
-	return "Replace an exact text snippet in a workspace file, or create a file when old is empty. Protected paths and paths outside the workspace ask for approval. Refused when the workspace is untrusted."
+	return "Replace an exact text snippet in a workspace file, or create a new file when old is empty. An empty old is refused when the file already exists. Copy old as a few unique lines exactly as read_file returned them, including tabs; make several small edits rather than one large one. Protected paths and paths outside the workspace ask for approval. Refused when the workspace is untrusted."
 }
 
 func (t *EditFile) Parameters() json.RawMessage { return schemaFor(new(editFileArgs)) }
@@ -112,14 +112,14 @@ func (t *EditFile) Execute(_ context.Context, raw json.RawMessage) (json.RawMess
 		}
 		next = args.New
 	case args.Old == "":
-		next = args.New
+		return nil, fmt.Errorf("%s already exists; empty old only creates new files. To change it, pass old as a few unique lines copied from read_file", args.Path)
 	default:
 		count := strings.Count(string(existing), args.Old)
 		if count == 0 {
-			return nil, fmt.Errorf("old text was not found")
+			return nil, notFoundError(string(existing), args.Old)
 		}
 		if count > 1 {
-			return nil, fmt.Errorf("old text matched %d times", count)
+			return nil, fmt.Errorf("old text matched %d times; include more surrounding lines so it matches once", count)
 		}
 		next = strings.Replace(string(existing), args.Old, args.New, 1)
 	}
@@ -158,6 +158,21 @@ func (t *EditFile) noteWrite(path string, created bool, before []byte) {
 		note.Before = append([]byte(nil), before...)
 	}
 	t.OnWrite(note)
+}
+
+func notFoundError(existing, old string) error {
+	if strings.Contains(trimLines(existing), trimLines(old)) {
+		return fmt.Errorf("old text was not found: it matches only if whitespace is ignored, so check indentation (tabs versus spaces) and trailing spaces; call read_file and copy the lines exactly")
+	}
+	return fmt.Errorf("old text was not found: the file may have changed or the snippet was retyped; call read_file and copy old exactly from the current content")
+}
+
+func trimLines(text string) string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func editDisplayPath(raw json.RawMessage) string {

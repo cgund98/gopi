@@ -27,7 +27,7 @@ func Run(ctx context.Context, session *app.Session, decisions *trust.Store, resu
 	}
 	enableDisambiguateKeysMode()
 	defer disableDisambiguateKeysMode()
-	program := tea.NewProgram(model, tea.WithAltScreen())
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := program.Run()
 	return err
 }
@@ -118,9 +118,11 @@ func (m *programModel) bindChat(session *app.Session) {
 	m.chat.store = session.Store
 	m.chat.registry = session.Registry
 	m.chat.events = session.Events
+	m.chat.renderers = safeRenderers(session.Renderers, session.Redact)
 	m.chat.modelName = session.ActiveModel()
 	m.chat.modelOverrides = session.ModelOverrides()
 	m.chat.workspacePath = session.Root.Path
+	m.chat.readGrants = session.Grants
 	m.chat.mode = session.Mode
 	m.chat.input.Prompt = modePrompt(session.Mode)
 	m.chat.switchMode = func(mode app.Mode) error {
@@ -168,7 +170,7 @@ func (m *programModel) bindChat(session *app.Session) {
 	if session.Model != nil {
 		m.chat.systemPrompt = session.Model.SystemPrompt()
 	}
-	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets)
+	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets, session.Config.HostOnly...)
 	m.chat.tasks = session.Tasks
 	m.chat.taskEpoch = 0
 	m.chat.taskSeed = nil
@@ -238,10 +240,10 @@ func (m *programModel) runLoad(events chan tea.Msg, file *sess.File, width int) 
 	render := func(messages []gogent.Message, registry *gogent.ToolRegistry) string {
 		report("Preparing markdown")
 		prepareMarkdown(width)
-		cards := buildToolCards(messages, registry)
+		cards := buildToolCards(messages, registry, m.chat.renderers)
 		return renderTranscriptProgress(messages, cards, -1, width, true, func(done, total int) {
 			report(fmt.Sprintf("Rendering message %d of %d", done, total))
-		})
+		}, nil)
 	}
 	if file == nil && m.chat.sessionsHome == m.session.Root.Path {
 		events <- sessionLoadedMsg{Fresh: true, Same: true, Body: helpStyle.Render("Send a message to get started.")}
@@ -308,6 +310,9 @@ func (m *programModel) applyLoaded(msg sessionLoadedMsg) {
 		m.chat.taskSeed = nil
 		if m.chat.tasks != nil {
 			m.chat.tasks.Clear()
+		}
+		if m.session.Grants != nil {
+			m.session.Grants.Replace(nil)
 		}
 		m.chat.err = nil
 		m.chat.status = ""
@@ -387,6 +392,9 @@ func (m *programModel) resume(file sess.File) error {
 }
 
 func (m *programModel) resumeHere(file sess.File) error {
+	if m.session.Grants != nil {
+		m.session.Grants.Replace(file.ReadGrants)
+	}
 	if err := applySavedMode(m.session, file); err != nil {
 		return err
 	}
@@ -410,6 +418,9 @@ func (m *programModel) resumeHere(file sess.File) error {
 }
 
 func loadSavedChat(next *app.Session, file sess.File) error {
+	if next.Grants != nil {
+		next.Grants.Replace(file.ReadGrants)
+	}
 	if err := applySavedMode(next, file); err != nil {
 		return err
 	}

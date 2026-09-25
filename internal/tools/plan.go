@@ -185,4 +185,50 @@ func hasIgnoreLine(body, line string) bool {
 	return false
 }
 
+// UpdatePlan overwrites a plan that already exists. It does not create one.
+type UpdatePlan struct {
+	Inner *WritePlan
+}
+
+func (t *UpdatePlan) Name() string { return "write_plan" }
+
+func (t *UpdatePlan) Description() string {
+	return "Update an existing markdown plan under <workspace>/.gopi/plans. Pass path to that file, the full body, and the todos. This does not create a new plan."
+}
+
+func (t *UpdatePlan) Parameters() json.RawMessage { return schemaFor(new(writePlanArgs)) }
+
+func (t *UpdatePlan) RequiresApproval(context.Context, json.RawMessage) (gogent.ApprovalDecision, error) {
+	return gogent.ApprovalDecision{}, nil
+}
+
+func (t *UpdatePlan) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if t.Inner == nil {
+		return nil, fmt.Errorf("plan writer is not configured")
+	}
+	args, err := parseWritePlan(raw)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.Path) == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+	resolved, outside, err := t.Inner.Root.Canonical(args.Path)
+	if err != nil {
+		return accessDenied(args.Path, err.Error()), nil
+	}
+	plans := filepath.Join(t.Inner.Root.Path, ".gopi", "plans")
+	if outside || !insideDir(plans, resolved) || !strings.HasSuffix(resolved, ".md") {
+		return accessDenied(args.Path, "path must be an existing markdown file under .gopi/plans"), nil
+	}
+	if _, statErr := os.Stat(resolved); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return accessDenied(args.Path, "plan file does not exist"), nil
+		}
+		return accessDenied(args.Path, statErr.Error()), nil
+	}
+	return t.Inner.Execute(ctx, raw)
+}
+
 var _ gogent.Tool = (*WritePlan)(nil)
+var _ gogent.Tool = (*UpdatePlan)(nil)

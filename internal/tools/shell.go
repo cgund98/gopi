@@ -37,12 +37,17 @@ type Shell struct {
 	AllowHosts []string
 	DenyHosts  []string
 	Secrets    map[string]string
+	Grants     *ReadGrants
+	// SecretFiles are files secrets.toml references; the sandbox denies them.
+	SecretFiles []string
+	// HostOnly names secrets claimed by custom tools; they are never injected.
+	HostOnly []string
 }
 
 func (t *Shell) Name() string { return "shell" }
 
 func (t *Shell) Description() string {
-	return "Run a command in the workspace sandbox. Keep the command simple. If it needs one or two paths outside the workspace, set read_paths or write_paths instead of working around the sandbox. If it needs more than two or three, set profile to unsandboxed instead of listing them. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths when there are only a few, or with profile unsandboxed when there are more. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Those calls ask the user for approval and do not run until they approve. The user chooses any secret env names on the approval card."
+	return "Run a command in the workspace sandbox. Keep the command simple. If it needs one or two paths outside the workspace, set read_paths or write_paths instead of working around the sandbox. If it needs more than two or three, set profile to unsandboxed instead of listing them. Directories granted with grant_read are already readable; do not repeat them in read_paths. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths when there are only a few, or with profile unsandboxed when there are more. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Those calls ask the user for approval and do not run until they approve. The user chooses any secret env names on the approval card."
 }
 
 func (t *Shell) Parameters() json.RawMessage { return schemaFor(new(shellArgs)) }
@@ -118,7 +123,7 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		return accessDenied(cwd, "sandboxed shell is only available on macOS"), nil
 	}
 
-	rules, err := policy.Build(t.Root.Path, t.HomeDir, executablePath())
+	rules, err := policy.Build(t.Root.Path, t.HomeDir, executablePath(), t.SecretFiles...)
 	if err != nil {
 		t.audit(command, cwd, sandbox.ProfileSandbox, "denied", -1, time.Since(started))
 		return accessDenied(cwd, err.Error()), nil
@@ -130,7 +135,7 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	defer func() { _ = os.RemoveAll(tmp) }()
 
 	env := sandbox.ScrubbedEnv(tmp)
-	injected := injectedSecretNames(t.Secrets, args.SecretNames)
+	injected := injectedSecretNames(t.Secrets, args.SecretNames, t.HostOnly)
 	env = append(env, injectedEnv(t.Secrets, injected)...)
 	network := sandbox.NetworkDeny
 	var ports []int
@@ -150,21 +155,22 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		env = sandbox.WithProxyEnv(env, proxy.HTTPPort(), proxy.SOCKSPort())
 	}
 	profile := sandbox.Profile{
-		Name:        sandbox.ProfileSandbox,
-		ReadRoots:   []string{t.Root.Path},
-		WriteRoots:  []string{t.Root.Path, tmp},
-		Home:        homeDir(),
-		DenyRead:    rules.DenyRead,
-		DenyWrite:   rules.DenyWrite,
-		ExtraReads:  reads,
-		ExtraWrites: writes,
-		Network:     network,
-		ProxyPorts:  ports,
-		Env:         env,
-		Timeout:     sandbox.DefaultTimeout,
-		OutputLimit: sandbox.DefaultOutputLimit,
-		WorkDir:     cwd,
-		Argv:        []string{"/bin/sh", "-c", command},
+		Name:         sandbox.ProfileSandbox,
+		ReadRoots:    []string{t.Root.Path},
+		WriteRoots:   []string{t.Root.Path, tmp},
+		Home:         homeDir(),
+		DenyRead:     rules.DenyRead,
+		DenyWrite:    rules.DenyWrite,
+		ExtraReads:   reads,
+		ExtraWrites:  writes,
+		SessionReads: sessionReads(t.Grants, args.Profile == sandbox.ProfileUnsandboxed),
+		Network:      network,
+		ProxyPorts:   ports,
+		Env:          env,
+		Timeout:      sandbox.DefaultTimeout,
+		OutputLimit:  sandbox.DefaultOutputLimit,
+		WorkDir:      cwd,
+		Argv:         []string{"/bin/sh", "-c", command},
 	}
 	profileName := sandbox.ProfileSandbox
 	if args.Profile == sandbox.ProfileUnsandboxed {
@@ -316,9 +322,16 @@ func (t *Shell) audit(command, cwd, profileName, decision string, exitCode int, 
 	_, _ = f.WriteString(line)
 }
 
+func sessionReads(grants *ReadGrants, unsandboxed bool) []string {
+	if unsandboxed {
+		return nil
+	}
+	return grants.List()
+}
+
 var launchCommand = sandbox.Launch
 
-func injectedSecretNames(secrets map[string]string, requested []string) []string {
+func injectedSecretNames(secrets map[string]string, requested, hostOnly []string) []string {
 	var names []string
 	seen := map[string]bool{}
 	for _, name := range requested {
@@ -326,7 +339,7 @@ func injectedSecretNames(secrets map[string]string, requested []string) []string
 			continue
 		}
 		seen[name] = true
-		if gopisecrets.HostOnly(name) {
+		if gopisecrets.HostOnly(name, hostOnly...) {
 			continue
 		}
 		if _, ok := secrets[name]; !ok {

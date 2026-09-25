@@ -6,6 +6,8 @@ import (
 
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/cgund98/gopi/internal/toolview"
 )
 
 type toolCardState string
@@ -27,9 +29,10 @@ type toolCardView struct {
 	State       toolCardState
 	Result      string
 	CanReview   bool
+	Renderer    toolview.Renderer
 }
 
-func buildToolCards(messages []gogent.Message, registry *gogent.ToolRegistry) []toolCardView {
+func buildToolCards(messages []gogent.Message, registry *gogent.ToolRegistry, renderers map[string]toolview.Renderer) []toolCardView {
 	toolResults := make(map[string]gogent.Message)
 	for _, message := range messages {
 		if message.Role == gogent.MessageRoleTool && message.ToolCallID != "" {
@@ -43,7 +46,9 @@ func buildToolCards(messages []gogent.Message, registry *gogent.ToolRegistry) []
 			continue
 		}
 		for _, toolCall := range message.ToolCalls {
-			cards = append(cards, buildToolCard(message.ID, toolCall, toolResults[toolCall.ID], registry))
+			card := buildToolCard(message.ID, toolCall, toolResults[toolCall.ID], registry)
+			card.Renderer = renderers[toolCall.ToolName]
+			cards = append(cards, card)
 		}
 	}
 	return cards

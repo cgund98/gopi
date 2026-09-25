@@ -29,6 +29,7 @@ func TestPlanViewerOpensAndCloses(t *testing.T) {
 	chat.width = 60
 	chat.height = 20
 	chat.workspacePath = dir
+	chat.mode = app.ModePlan
 	chat.toolCards = []toolCardView{{ToolCallID: "call-1", ToolName: "write_plan"}}
 	chat.messages = []gogent.Message{
 		gogent.NewToolResultMessage("call-1", `{"path":".gopi/plans/ship-it.md","status":"created"}`),

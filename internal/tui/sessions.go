@@ -16,6 +16,7 @@ import (
 const helpText = `/agent, /ask, /plan, and /mode <name> switch the session mode
 /model <name> sets the model for the active mode
 /compact summarizes earlier turns
+/mouse [on|off] toggles mouse capture for text selection
 /sessions opens the saved-chat list
 /plans opens saved plans
 /review walks file edits from this chat
@@ -52,6 +53,11 @@ func (m *chatModel) persistSession() tea.Cmd {
 	titleFn := m.chatTitle
 	ctx := m.ctx
 	models := m.modelOverrides
+	var grants []string
+	haveGrants := m.readGrants != nil
+	if haveGrants {
+		grants = m.readGrants.List()
+	}
 	return func() tea.Msg {
 		messages, err := store.Load(ctx, id)
 		if err != nil || len(messages) == 0 {
@@ -59,22 +65,28 @@ func (m *chatModel) persistSession() tea.Cmd {
 		}
 		title := ""
 		var review []session.ReviewEntry
+		var savedGrants []string
 		if existing, err := sessions.Load(id); err == nil {
 			title = existing.Title
 			review = existing.Review
+			savedGrants = existing.ReadGrants
 		}
 		if title == "" {
 			title = generateTitle(ctx, titleFn, messages)
 		}
+		if !haveGrants {
+			grants = savedGrants
+		}
 		err = sessions.Save(session.File{
-			ID:        id,
-			Title:     title,
-			Workspace: workspace,
-			Mode:      mode,
-			Updated:   time.Now().UTC(),
-			Messages:  messages,
-			Review:    review,
-			Models:    models,
+			ID:         id,
+			Title:      title,
+			Workspace:  workspace,
+			Mode:       mode,
+			Updated:    time.Now().UTC(),
+			Messages:   messages,
+			Review:     review,
+			Models:     models,
+			ReadGrants: grants,
 		})
 		return sessionSavedMsg{Title: title, Review: review, Err: err}
 	}

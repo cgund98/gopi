@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,44 @@ func TestReadRejectsEscapePaths(t *testing.T) {
 	}
 }
 
+func TestEditRefusesEmptyOldOnExistingFile(t *testing.T) {
+	root := openTemp(t)
+	path := filepath.Join(root.Path, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted}
+	_, err := edit.Execute(context.Background(), json.RawMessage(`{"path":"main.go","old":"","new":"// fragment\n"}`))
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("err = %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "package main\n" {
+		t.Fatalf("file = %q, err = %v", body, err)
+	}
+}
+
+func TestEditMissErrorsExplainHowToRecover(t *testing.T) {
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, "main.go"), []byte("func main() {\n\tprintln(\"hi\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted}
+	for _, tc := range []struct {
+		old, want string
+	}{
+		{"func main() {\n    println(\"hi\")\n}", "whitespace is ignored"},
+		{"println(\"bye\")", "file may have changed"},
+		{"\"", "matched 2 times"},
+	} {
+		raw, _ := json.Marshal(map[string]string{"path": "main.go", "old": tc.old, "new": "x"})
+		_, err := edit.Execute(context.Background(), raw)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("old %q: err = %v, want %q", tc.old, err, tc.want)
+		}
+	}
+}
+
 func TestReadAndEditInsideWorkspace(t *testing.T) {
 	root := openTemp(t)
 	edit := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted}
@@ -69,12 +108,14 @@ func TestReadAndEditInsideWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var payload map[string]string
+	var payload struct {
+		Content string `json:"content"`
+	}
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["content"] != "beta" {
-		t.Fatalf("content = %q", payload["content"])
+	if payload.Content != "beta" {
+		t.Fatalf("content = %q", payload.Content)
 	}
 }
 
@@ -162,6 +203,89 @@ func TestFindListsAndFiltersFileNames(t *testing.T) {
 	}
 }
 
+func TestReadReportsRangeAndContinuation(t *testing.T) {
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, "small.txt"), []byte("a\nb\nc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Repeat("x", 99) + "\n"
+	if err := os.WriteFile(filepath.Join(root.Path, "big.txt"), []byte(strings.Repeat(line, 500)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tool := &ReadFile{Root: root}
+	type readPayload struct {
+		Content    string `json:"content"`
+		StartLine  int    `json:"start_line"`
+		EndLine    int    `json:"end_line"`
+		TotalLines int    `json:"total_lines"`
+		Truncated  bool   `json:"truncated"`
+		NextOffset int    `json:"next_offset"`
+	}
+	read := func(args string) readPayload {
+		t.Helper()
+		raw, err := tool.Execute(context.Background(), json.RawMessage(args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload readPayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+
+	small := read(`{"path":"small.txt","offset":2,"limit":1}`)
+	if small.Content != "b\n" || small.StartLine != 2 || small.EndLine != 2 || small.TotalLines != 3 || small.Truncated {
+		t.Fatalf("small = %+v", small)
+	}
+
+	first := read(`{"path":"big.txt"}`)
+	if !first.Truncated || first.TotalLines != 500 || first.StartLine != 1 || first.NextOffset != first.EndLine+1 {
+		t.Fatalf("first = %+v", first)
+	}
+	if len(first.Content) > maxReadBytes || !strings.HasSuffix(first.Content, "\n") || strings.Count(first.Content, "\n") != first.EndLine {
+		t.Fatalf("first window cut mid-line: %d bytes, end %d", len(first.Content), first.EndLine)
+	}
+	rest := read(fmt.Sprintf(`{"path":"big.txt","offset":%d}`, first.NextOffset))
+	if rest.Truncated || rest.StartLine != first.NextOffset || rest.EndLine != 500 {
+		t.Fatalf("rest = %+v", rest)
+	}
+	if first.Content+rest.Content != strings.Repeat(line, 500) {
+		t.Fatal("windows do not join back into the file")
+	}
+
+	past := read(`{"path":"small.txt","offset":9}`)
+	if past.Content != "" || past.TotalLines != 3 || past.Truncated {
+		t.Fatalf("past = %+v", past)
+	}
+}
+
+func TestSecretFileReadNeedsApprovalEvenWhenGranted(t *testing.T) {
+	root := openTemp(t)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := filepath.Join(dir, "gcal_token.json")
+	if err := os.WriteFile(token, []byte(`{"refresh_token":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := policy.Build(root.Path, t.TempDir(), "", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := &ReadGrants{}
+	grants.Add(dir)
+	tool := &ReadFile{Root: root, Rules: rules, Grants: grants}
+	decision, err := tool.RequiresApproval(context.Background(), json.RawMessage(`{"path":`+mustJSON(t, token)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required || !strings.Contains(decision.Reason, "secret "+token) {
+		t.Fatalf("decision = %#v", decision)
+	}
+}
+
 func openTemp(t *testing.T) workspace.Root {
 	t.Helper()
 	root, err := workspace.Open(t.TempDir())
@@ -209,6 +333,31 @@ func TestReadProtectedPathPausesAndRedacts(t *testing.T) {
 	text := string(body)
 	if !strings.Contains(text, "visible=1") || strings.Contains(text, "other-secret") {
 		t.Fatalf("body = %s", text)
+	}
+}
+
+func TestResultsKeepHTMLCharactersLiteral(t *testing.T) {
+	root := openTemp(t)
+	source := "if a && b {\n\tx := <-ch\n\ts := \"\\u0026\" // APIs & Services -> x > y\n}\n"
+	if err := os.WriteFile(filepath.Join(root.Path, "main.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body, err := WrapRedacting(&ReadFile{Root: root}, nil).Execute(context.Background(), json.RawMessage(`{"path":"main.go"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if strings.Contains(text, `\u0026&`) || !strings.Contains(text, "a && b") || !strings.Contains(text, "<-ch") || !strings.Contains(text, "APIs & Services -> x > y") {
+		t.Fatalf("body = %s", text)
+	}
+	var result struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != source {
+		t.Fatalf("content = %q, want %q", result.Content, source)
 	}
 }
 
@@ -374,5 +523,132 @@ func TestFindProtectedPathRequiresApproval(t *testing.T) {
 	}
 	if strings.Join(payload.Files, ",") != ".env,note.txt" || len(payload.Denied) != 0 {
 		t.Fatalf("elevated = %s", elevated)
+	}
+}
+
+func TestGrepAndFindHonorDirectoryElevation(t *testing.T) {
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, ".gitignore"), []byte("scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(root.Path, "scratch", "demo")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "a.txt"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "b.txt"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grepTool := &Grep{Root: root, Rules: rules}
+	findTool := &Find{Root: root, Rules: rules}
+
+	opened, err := grepTool.Execute(context.Background(), json.RawMessage(`{"pattern":"needle","read_paths":["scratch"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(opened), "scratch/demo/a.txt") || !strings.Contains(string(opened), "scratch/demo/b.txt") || strings.Contains(string(opened), `"denied":[{`) {
+		t.Fatalf("directory grant = %s", opened)
+	}
+	listed, err := findTool.Execute(context.Background(), json.RawMessage(`{"read_paths":["scratch"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(listed), "scratch/demo/a.txt") || !strings.Contains(string(listed), "scratch/demo/b.txt") {
+		t.Fatalf("find directory grant = %s", listed)
+	}
+
+	one, err := grepTool.Execute(context.Background(), json.RawMessage(`{"pattern":"needle","read_paths":["scratch/demo/a.txt"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onePayload struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(one, &onePayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(onePayload.Matches) != 1 || onePayload.Matches[0].Path != "scratch/demo/a.txt" {
+		t.Fatalf("file grant = %s", one)
+	}
+}
+
+func TestGrepAndFindHonorOutsideReadPaths(t *testing.T) {
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, ".env"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "note.txt"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, ".env"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grepTool := &Grep{Root: root, Rules: rules}
+	blocked, err := grepTool.Execute(context.Background(), json.RawMessage(`{"pattern":"needle","path":`+mustJSON(t, outside)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(blocked), "access_denied") || strings.Contains(string(blocked), "note.txt") {
+		t.Fatalf("ungranted outside = %s", blocked)
+	}
+	decision, err := grepTool.RequiresApproval(context.Background(), json.RawMessage(`{"pattern":"needle","read_paths":[`+mustJSON(t, outside)+`]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required || !strings.Contains(decision.Reason, outside) {
+		t.Fatalf("decision = %#v", decision)
+	}
+	opened, err := grepTool.Execute(context.Background(), json.RawMessage(`{"pattern":"needle","read_paths":[`+mustJSON(t, outside)+`]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(opened), "note.txt") {
+		t.Fatalf("outside grant = %s", opened)
+	}
+	if strings.Contains(string(opened), "visible-secret") {
+		t.Fatalf("leaked workspace secret = %s", opened)
+	}
+	var payload struct {
+		Matches []struct {
+			Path string `json:"path"`
+			Text string `json:"text"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(opened, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range payload.Matches {
+		if strings.HasSuffix(match.Path, ".env") {
+			t.Fatalf("floor file opened by a parent grant: %s", opened)
+		}
+	}
+
+	findTool := &Find{Root: root, Rules: rules}
+	found, err := findTool.Execute(context.Background(), json.RawMessage(`{"pattern":"note.txt","read_paths":[`+mustJSON(t, outside)+`]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundPayload struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(found, &foundPayload); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(foundPayload.Files, ",")
+	if !strings.Contains(joined, "note.txt") || strings.Contains(joined, ".env") {
+		t.Fatalf("find outside grant = %s", found)
 	}
 }

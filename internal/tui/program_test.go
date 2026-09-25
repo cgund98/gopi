@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/cgund98/gogent/inmemory"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
@@ -25,13 +27,50 @@ import (
 )
 
 func TestStatusSuffixShowsModelWorkspaceAndThinking(t *testing.T) {
-	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, false, 48)), " ")
+	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, false, "", 48)), " ")
 	if !strings.HasPrefix(idle, "/tmp/gopi") || !strings.HasSuffix(idle, "gpt-6-sol | 12%") || strings.Contains(idle, "thinking") {
 		t.Fatalf("idle suffix = %q", idle)
 	}
-	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, true, 48)), " ")
-	if !strings.HasPrefix(busy, "/tmp/gopi") || !strings.HasSuffix(busy, "gpt-6-sol | 12% | thinking") {
+	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, true, "2s", 48)), " ")
+	if !strings.HasPrefix(busy, "/tmp/gopi") || !strings.HasSuffix(busy, "gpt-6-sol | 12% | thinking 2s") {
 		t.Fatalf("busy suffix = %q", busy)
+	}
+}
+
+func TestFinishWorkIncludesToolTime(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.width = 60
+	chat.height = 20
+	chat.busy = true
+	chat.workStarted = time.Now().Add(-2 * time.Second)
+	assistant := gogent.NewAssistantMessageWithToolCalls("", []gogent.ToolCall{{
+		ID:       "call-1",
+		ToolName: "shell",
+	}})
+	assistant.Usage = &gogent.Usage{Input: 10, Output: 1}
+	final := gogent.NewAssistantMessage("done")
+	final.Usage = &gogent.Usage{Input: 28400, Output: 826}
+	chat.messages = []gogent.Message{
+		gogent.NewUserMessage("git status"),
+		assistant,
+		gogent.NewToolResultMessage("call-1", `{"stdout":"ok"}`),
+		final,
+	}
+	if chat.thinkingLabel() == "" {
+		t.Fatal("timer stopped while the tool ran")
+	}
+	chat.busy = false
+	chat.finishWork()
+	if _, ok := chat.turnWork[assistant.ID]; ok {
+		t.Fatal("stamped the tool-call step")
+	}
+	if chat.turnWork[final.ID] < 2*time.Second {
+		t.Fatalf("work = %s", chat.turnWork[final.ID])
+	}
+	chat.refreshTranscript(true)
+	plain := stripANSI(chat.View())
+	if strings.Contains(plain, "Thought") || !strings.Contains(plain, "28.4k/826  Worked for") {
+		t.Fatalf("view = %q", plain)
 	}
 }
 
@@ -427,7 +466,7 @@ func TestResumeSwapsWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	cfg := config.Config{Model: "gpt-4o-mini", MaxIterations: 2, OpenAIAPIKey: "test-key", HomeDir: home, Network: "deny"}
+	cfg := config.Config{Model: "gpt-5.6-luna", MaxIterations: 2, OpenAIAPIKey: "test-key", HomeDir: home, Network: "deny"}
 	decisions, err := trust.Open(home)
 	if err != nil {
 		t.Fatal(err)
@@ -523,7 +562,7 @@ func TestResumeSameWorkspaceKeepsAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	cfg := config.Config{Model: "gpt-4o-mini", MaxIterations: 2, OpenAIAPIKey: "test-key", HomeDir: home, Network: "deny"}
+	cfg := config.Config{Model: "gpt-5.6-luna", MaxIterations: 2, OpenAIAPIKey: "test-key", HomeDir: home, Network: "deny"}
 	decisions, err := trust.Open(home)
 	if err != nil {
 		t.Fatal(err)
@@ -538,11 +577,12 @@ func TestResumeSameWorkspaceKeepsAgent(t *testing.T) {
 	model := newProgram(context.Background(), started, decisions)
 	agent := model.chat.agent
 	saved := session.File{
-		ID:        "same-chat",
-		Title:     "Here",
-		Workspace: current.Path,
-		Mode:      "agent",
-		Messages:  []gogent.Message{gogent.NewUserMessage("still here")},
+		ID:         "same-chat",
+		Title:      "Here",
+		Workspace:  current.Path,
+		Mode:       "agent",
+		Messages:   []gogent.Message{gogent.NewUserMessage("still here")},
+		ReadGrants: []string{"/tmp/session-grant"},
 	}
 	if err := model.resume(saved); err != nil {
 		t.Fatal(err)
@@ -552,6 +592,9 @@ func TestResumeSameWorkspaceKeepsAgent(t *testing.T) {
 	}
 	if model.chat.chatID != "same-chat" || len(model.chat.messages) != 1 {
 		t.Fatalf("chat = %s messages = %d", model.chat.chatID, len(model.chat.messages))
+	}
+	if !model.session.Grants.Covers("/tmp/session-grant/note.txt") {
+		t.Fatalf("grants = %#v", model.session.Grants.List())
 	}
 }
 
@@ -591,10 +634,17 @@ func TestPersistWritesAfterFinishedRun(t *testing.T) {
 	chat.chatTitle = func(context.Context, string, string) (string, error) {
 		return "should not replace", nil
 	}
+	grants := &tools.ReadGrants{}
+	grants.Add("/tmp/session-grant")
+	chat.readGrants = grants
 	msg = chat.persistSession()()
 	saved = msg.(sessionSavedMsg)
 	if saved.Title != "Generated title" {
 		t.Fatalf("title replaced: %q", saved.Title)
+	}
+	loaded, err = store.Load(chat.chatID)
+	if err != nil || len(loaded.ReadGrants) != 1 || loaded.ReadGrants[0] != "/tmp/session-grant" {
+		t.Fatalf("grants = %#v err = %v", loaded.ReadGrants, err)
 	}
 }
 
@@ -645,6 +695,202 @@ func TestReviewTreePutsDirectoryAboveItsFile(t *testing.T) {
 	want := "Files\nafter.go\nmain.go\n\ncmd/\n  main.go\n\ninternal/\n  diff.go\n\n  tui/\n    review.go"
 	if got != want {
 		t.Fatalf("tree = %q", got)
+	}
+}
+
+func TestReviewScrollsWrappedFileToTop(t *testing.T) {
+	work := t.TempDir()
+	var before, after strings.Builder
+	for i := 0; i < 40; i++ {
+		line := fmt.Sprintf("line %02d\t\t%s\n", i, strings.Repeat("\twide", 20))
+		before.WriteString(line)
+		if i == 39 {
+			line = "changed\n"
+		}
+		after.WriteString(line)
+	}
+	if err := os.WriteFile(filepath.Join(work, "wide.txt"), []byte(after.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.NoteEdit("chat", "wide.txt", true, false, []byte(before.String())); err != nil {
+		t.Fatal(err)
+	}
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.chatID = "chat"
+	chat.sessions = store
+	chat.workspacePath = work
+	chat.width = 80
+	chat.height = 20
+	chat.reloadReview()
+	chat.openReview()
+	press := func(key tea.KeyMsg) {
+		updated, _ := chat.Update(key)
+		chat = updated.(*chatModel)
+	}
+	press(tea.KeyMsg{Type: tea.KeyTab})
+	view := stripANSI(chat.View())
+	if lines := strings.Count(view, "\n") + 1; lines > chat.height {
+		t.Fatalf("view is %d lines tall for height %d", lines, chat.height)
+	}
+	if strings.Contains(view, "line 00") {
+		t.Fatal("expected the view to open at the edit, not the top")
+	}
+	start := chat.reviewScroll
+	press(tea.KeyMsg{Type: tea.KeyShiftUp})
+	if chat.reviewScroll != start-fastScrollLines {
+		t.Fatalf("shift+up moved from %d to %d", start, chat.reviewScroll)
+	}
+	for i := 0; i < 40; i++ {
+		press(tea.KeyMsg{Type: tea.KeyShiftUp})
+	}
+	view = stripANSI(chat.View())
+	if !strings.Contains(view, "line 00") || !strings.Contains(view, "wide.txt") {
+		t.Fatalf("top line or file header missing:\n%s", view)
+	}
+	if strings.Contains(view, "\t") {
+		t.Fatal("tabs reach the terminal and wrap past the pane width")
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > chat.width {
+			t.Fatalf("line wider than %d: %q", chat.width, line)
+		}
+	}
+	if lines := strings.Count(view, "\n") + 1; lines > chat.height {
+		t.Fatalf("view is %d lines tall for height %d", lines, chat.height)
+	}
+	press(tea.KeyMsg{Type: tea.KeyDown})
+	if chat.reviewScroll != 1 {
+		t.Fatalf("down moved to %d", chat.reviewScroll)
+	}
+	press(tea.KeyMsg{Type: tea.KeyShiftDown})
+	if chat.reviewScroll != 1+fastScrollLines {
+		t.Fatalf("shift+down moved to %d", chat.reviewScroll)
+	}
+}
+
+func TestMouseWheelScrollsTranscript(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.transcriptVP.Width = 40
+	chat.transcriptVP.Height = 5
+	var body strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&body, "row %d\n", i)
+	}
+	chat.transcriptVP.SetContent(body.String())
+	chat.transcriptVP.GotoBottom()
+	bottom := chat.transcriptVP.YOffset
+	chat.busy = true
+	updated, _ := chat.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	chat = updated.(*chatModel)
+	if chat.transcriptVP.YOffset != bottom-wheelLines || chat.followChatEnd {
+		t.Fatalf("offset = %d from %d follow = %v", chat.transcriptVP.YOffset, bottom, chat.followChatEnd)
+	}
+	updated, _ = chat.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	chat = updated.(*chatModel)
+	if chat.transcriptVP.YOffset != bottom || !chat.followChatEnd {
+		t.Fatalf("offset = %d follow = %v", chat.transcriptVP.YOffset, chat.followChatEnd)
+	}
+}
+
+const reviewBaseline = "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"
+const reviewEdited = "one\nTWO\nthree\nfour\nfive\nSIX\nseven\nEIGHT\n"
+
+func openReviewFor(t *testing.T, current string, created bool, before []byte) (*chatModel, string, *session.Store) {
+	t.Helper()
+	work := t.TempDir()
+	path := filepath.Join(work, "main.txt")
+	if err := os.WriteFile(path, []byte(current), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.NoteEdit("chat", "main.txt", true, created, before); err != nil {
+		t.Fatal(err)
+	}
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.chatID = "chat"
+	chat.sessions = store
+	chat.workspacePath = work
+	chat.width = 100
+	chat.height = 30
+	chat.openReview()
+	return chat, path, store
+}
+
+func pressReview(t *testing.T, chat *chatModel, key rune) *chatModel {
+	t.Helper()
+	updated, _ := chat.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+	return updated.(*chatModel)
+}
+
+func TestReviewApproveFileKeepsEdits(t *testing.T) {
+	chat, path, store := openReviewFor(t, reviewEdited, false, []byte(reviewBaseline))
+	if _, hunks := chat.currentReview(); len(hunks) < 2 {
+		t.Fatalf("hunks = %d, want several", len(hunks))
+	}
+	chat = pressReview(t, chat, 'A')
+	body, _ := os.ReadFile(path)
+	if string(body) != reviewEdited {
+		t.Fatalf("file = %q", body)
+	}
+	loaded, err := store.Load("chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.reviewOpen || chat.pendingReviewCount() != 0 || len(loaded.Review) != 0 {
+		t.Fatalf("open = %v pending = %d review = %+v", chat.reviewOpen, chat.pendingReviewCount(), loaded.Review)
+	}
+}
+
+func TestReviewRejectFileRestoresBaseline(t *testing.T) {
+	chat, path, store := openReviewFor(t, reviewEdited, false, []byte(reviewBaseline))
+	chat = pressReview(t, chat, 'X')
+	if chat.reviewErr != "" {
+		t.Fatal(chat.reviewErr)
+	}
+	body, _ := os.ReadFile(path)
+	if string(body) != reviewBaseline {
+		t.Fatalf("file = %q", body)
+	}
+	loaded, err := store.Load("chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.reviewOpen || len(loaded.Review) != 0 {
+		t.Fatalf("open = %v review = %+v", chat.reviewOpen, loaded.Review)
+	}
+}
+
+func TestReviewRejectCreatedFileRemovesIt(t *testing.T) {
+	chat, path, _ := openReviewFor(t, reviewEdited, true, nil)
+	chat = pressReview(t, chat, 'X')
+	if chat.reviewErr != "" {
+		t.Fatal(chat.reviewErr)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("created file still exists: %v", err)
+	}
+}
+
+func TestReviewRejectFileLeavesStaleFileAlone(t *testing.T) {
+	chat, path, _ := openReviewFor(t, reviewEdited, false, []byte(reviewBaseline))
+	entry, hunks := chat.currentReview()
+	changed := strings.Replace(reviewEdited, "SIX", "six-ish", 1)
+	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := chat.rejectFile(entry, hunks); err == nil {
+		t.Fatal("stale hunks were applied")
+	}
+	body, _ := os.ReadFile(path)
+	if string(body) != changed {
+		t.Fatalf("file = %q", body)
 	}
 }
 

@@ -66,12 +66,17 @@ func toolHeadline(card toolCardView) string {
 		}
 		return fmt.Sprintf("tasks %d/%d", done, total)
 	default:
+		if card.Renderer != nil {
+			if headline := card.Renderer.Headline(card.Args); headline != "" {
+				return headline
+			}
+		}
 		return card.ToolName
 	}
 }
 
 func renderToolBody(card toolCardView, width int) string {
-	if card.ToolName != "edit_file" {
+	if card.ToolName != "edit_file" || card.State == toolCardFailed || resultError(card.Result) {
 		return ""
 	}
 	path, old, newText := editArgs(card.Args)
@@ -79,25 +84,48 @@ func renderToolBody(card toolCardView, width int) string {
 }
 
 func hideToolResult(card toolCardView) bool {
-	if strings.Contains(card.Result, `"error"`) {
+	if resultError(card.Result) {
 		return false
 	}
 	switch card.ToolName {
-	case "edit_file", "read_file", "grep", "find", "web_search", "web_fetch":
+	case "grep", "find":
+		return len(blockedPaths(card.Result)) == 0
+	case "edit_file", "read_file", "web_search", "web_fetch":
 		return true
 	default:
-		return false
+		view, ok := customResult(card, card.Result)
+		return ok && view.Hide
 	}
 }
 
-func renderFriendlyResult(card toolCardView, content string, width int) string {
+// resultError reports a top-level error field, not errors nested in lists such as denied.
+func resultError(content string) bool {
 	var probe struct {
 		Error string `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(content), &probe); err == nil && probe.Error != "" {
+	return json.Unmarshal([]byte(content), &probe) == nil && probe.Error != ""
+}
+
+func blockedPaths(content string) []string {
+	var probe struct {
+		Blocked []string `json:"blocked_paths"`
+	}
+	if json.Unmarshal([]byte(content), &probe) != nil {
+		return nil
+	}
+	return probe.Blocked
+}
+
+func renderFriendlyResult(card toolCardView, content string, width int) string {
+	if resultError(content) {
 		return ""
 	}
 	switch card.ToolName {
+	case "grep", "find":
+		if blocked := blockedPaths(content); len(blocked) > 0 {
+			return toolDimStyle.Render(indentBlock("Blocked: "+strings.Join(blocked, ", "), width))
+		}
+		return ""
 	case "shell":
 		var payload struct {
 			Stdout    string `json:"stdout"`
@@ -122,6 +150,9 @@ func renderFriendlyResult(card toolCardView, content string, width int) string {
 	case "write_plan":
 		return renderPlanResult(card, content, width)
 	default:
+		if view, ok := customResult(card, content); ok {
+			return renderToolView(view, width)
+		}
 		return ""
 	}
 }
@@ -255,6 +286,11 @@ func renderApprovalBody(card toolCardView, width int) string {
 	case "read_file", "grep", "find", "shell":
 		return renderPathGrants(card.Args, width)
 	default:
+		if card.Renderer != nil {
+			if view := card.Renderer.RenderApproval(card.Args); !view.IsZero() {
+				return renderToolView(view, width)
+			}
+		}
 		return renderToolArgsBlock(card.Args, width)
 	}
 }

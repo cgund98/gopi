@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/bubbles/key"
@@ -20,6 +21,7 @@ import (
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/tools"
+	"github.com/cgund98/gopi/internal/toolview"
 )
 
 type chatModel struct {
@@ -29,6 +31,8 @@ type chatModel struct {
 	store    gogent.MessageStore
 	registry *gogent.ToolRegistry
 	events   *gogent.ChannelBroadcaster
+	// renderers are custom tool renderers, already wrapped by safeRenderers.
+	renderers map[string]toolview.Renderer
 
 	messages         []gogent.Message
 	toolCards        []toolCardView
@@ -40,8 +44,11 @@ type chatModel struct {
 	selectedTool     int
 	followChatEnd    bool
 	busy             bool
+	workStarted      time.Time
+	turnWork         map[string]time.Duration
 	spinner          spinner.Model
 	status           string
+	mouseOff         bool
 	err              error
 	modelName        string
 	workspacePath    string
@@ -71,6 +78,7 @@ type chatModel struct {
 	planListErr      string
 	seenPlans        map[string]bool
 	sessions         *session.Store
+	readGrants       *tools.ReadGrants
 	sessionTitle     string
 	chatTitle        func(context.Context, string, string) (string, error)
 	sessionsOpen     bool
@@ -178,6 +186,7 @@ func (m *chatModel) startRun(fn func(context.Context) error) tea.Cmd {
 	m.busy = true
 	m.err = nil
 	m.status = ""
+	m.workStarted = time.Now()
 	return tea.Batch(
 		runAgent(func() error {
 			return fn(ctx)
@@ -259,6 +268,8 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil && !errors.Is(msg.Err, context.Canceled) {
 			m.err = msg.Err
 			m.status = msg.Err.Error()
+			_ = m.refreshFromStore()
+			m.finishWork()
 		} else {
 			m.afterStoreRefresh()
 			if errors.Is(msg.Err, context.Canceled) {
@@ -270,6 +281,13 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case compactDoneMsg:
 		m.busy = false
+		if msg.Err == nil && msg.Summary.ID != "" && !m.workStarted.IsZero() {
+			if m.turnWork == nil {
+				m.turnWork = map[string]time.Duration{}
+			}
+			m.turnWork[msg.Summary.ID] = time.Since(m.workStarted)
+		}
+		m.workStarted = time.Time{}
 		if msg.Err != nil {
 			m.err = msg.Err
 			m.status = msg.Err.Error()
@@ -346,13 +364,7 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case tea.MouseMsg:
-		if m.inApprovalMode() {
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.transcriptVP, cmd = m.transcriptVP.Update(msg)
-		m.followChatEnd = m.transcriptVP.AtBottom()
-		return m, cmd
+		return m, m.handleWheel(msg)
 
 	default:
 		if m.composerOpen() && isShiftEnter(msg) {
@@ -372,12 +384,64 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// finishWork records one duration for the turn, including tool calls, on the
+// assistant message that shows token usage.
+func (m *chatModel) finishWork() {
+	if m.busy || m.workStarted.IsZero() {
+		return
+	}
+	id := workMessageID(m.messages)
+	if id != "" {
+		if m.turnWork == nil {
+			m.turnWork = map[string]time.Duration{}
+		}
+		m.turnWork[id] = time.Since(m.workStarted)
+	}
+	m.workStarted = time.Time{}
+}
+
+func workMessageID(messages []gogent.Message) string {
+	if i := lastUsageIndex(messages); i >= 0 && messages[i].ID != "" {
+		return messages[i].ID
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == gogent.MessageRoleAssistant && messages[i].ID != "" {
+			return messages[i].ID
+		}
+	}
+	return ""
+}
+
+func (m *chatModel) thinkingLabel() string {
+	if m.workStarted.IsZero() {
+		return ""
+	}
+	return formatThought(time.Since(m.workStarted))
+}
+
+func formatThought(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	secs := int(d.Seconds())
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	mins := secs / 60
+	secs %= 60
+	if secs == 0 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	return fmt.Sprintf("%dm %ds", mins, secs)
+}
+
 func (m *chatModel) afterStoreRefresh() {
 	if err := m.refreshFromStore(); err != nil {
 		m.err = err
 		m.status = "Failed to refresh chat"
 		return
 	}
+	m.finishWork()
 
 	m.err = nil
 	m.syncTasks()
@@ -408,18 +472,80 @@ func (m *chatModel) afterStoreRefresh() {
 	m.status = ""
 }
 
+const fastScrollLines = 10
+
 func historyScrollKey(msg tea.KeyMsg) bool {
 	switch msg.String() {
-	case "up", "down", "pgup", "pgdown", "home", "end":
+	case "up", "down", "pgup", "pgdown", "home", "end", "shift+up", "shift+down":
 		return true
 	default:
 		return false
 	}
 }
 
-func (m *chatModel) scrollHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
+// fastScroll reports the line delta for shift+up and shift+down.
+func fastScroll(msg tea.KeyMsg) (int, bool) {
+	switch msg.String() {
+	case "shift+up":
+		return -fastScrollLines, true
+	case "shift+down":
+		return fastScrollLines, true
+	default:
+		return 0, false
+	}
+}
+
+func scrollViewport(vp *viewport.Model, msg tea.KeyMsg) tea.Cmd {
+	if delta, ok := fastScroll(msg); ok {
+		scrollLines(vp, delta)
+		return nil
+	}
 	var cmd tea.Cmd
-	m.transcriptVP, cmd = m.transcriptVP.Update(msg)
+	*vp, cmd = vp.Update(msg)
+	return cmd
+}
+
+const wheelLines = 3
+
+// handleWheel scrolls whichever view is open. Other mouse events are ignored.
+func (m *chatModel) handleWheel(msg tea.MouseMsg) tea.Cmd {
+	if msg.Action != tea.MouseActionPress {
+		return nil
+	}
+	delta := 0
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		delta = -wheelLines
+	case tea.MouseButtonWheelDown:
+		delta = wheelLines
+	default:
+		return nil
+	}
+	switch {
+	case m.reviewOpen:
+		if m.reviewPane == reviewPaneFile {
+			m.scrollReview(delta)
+		}
+	case m.planOpen:
+		scrollLines(&m.planVP, delta)
+	case m.sessionsOpen, m.plansOpen, m.inApprovalMode():
+	default:
+		scrollLines(&m.transcriptVP, delta)
+		m.followChatEnd = m.transcriptVP.AtBottom()
+	}
+	return nil
+}
+
+func scrollLines(vp *viewport.Model, delta int) {
+	if delta < 0 {
+		vp.ScrollUp(-delta)
+	} else {
+		vp.ScrollDown(delta)
+	}
+}
+
+func (m *chatModel) scrollHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	cmd := scrollViewport(&m.transcriptVP, msg)
 	m.followChatEnd = m.transcriptVP.AtBottom()
 	return m, cmd
 }
@@ -475,6 +601,8 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m.scrollHistory(msg)
+	case "shift+up", "shift+down":
+		return m.scrollHistory(msg)
 	case "shift+enter", "alt+enter":
 		return m.insertNewline()
 	case "tab":
@@ -516,6 +644,11 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			m.completeOpen = false
 			return m, m.compact()
+		}
+		if text == "/mouse" || strings.HasPrefix(text, "/mouse ") {
+			m.input.SetValue("")
+			m.completeOpen = false
+			return m, m.handleMouse(text)
 		}
 		if strings.HasPrefix(text, "/model") {
 			m.input.SetValue("")
@@ -567,7 +700,7 @@ func (m *chatModel) refreshFromStore() error {
 		return err
 	}
 	m.messages = messages
-	m.toolCards = buildToolCards(messages, m.registry)
+	m.toolCards = buildToolCards(messages, m.registry, m.renderers)
 
 	m.pendingApprovals = buildPendingApprovals(m.messages, m.registry)
 	return nil
@@ -578,7 +711,7 @@ func (m *chatModel) refreshTranscript(followEnd bool) {
 	if m.inApprovalMode() {
 		selected = m.selectedTool
 	}
-	syncTranscriptViewport(&m.transcriptVP, m.messages, m.toolCards, selected, followEnd, !m.busy && !m.inApprovalMode())
+	syncTranscriptViewport(&m.transcriptVP, m.messages, m.toolCards, selected, followEnd, !m.busy && !m.inApprovalMode(), m.turnWork)
 }
 
 const footerBufferLines = 1
@@ -742,14 +875,18 @@ func (m *chatModel) View() string {
 		b.WriteString(renderDivider(m.width))
 		b.WriteByte('\n')
 		if pending, ok := m.currentPendingApproval(); ok {
-			b.WriteString(renderApprovalPrompt(pending, m.width))
+			b.WriteString(renderApprovalPrompt(pending, m.renderers[pending.ToolName], m.width))
 			b.WriteByte('\n')
 		}
 		b.WriteString(m.approvalList.View())
 		b.WriteByte('\n')
 		b.WriteString(helpStyle.Render(approvalHelpText))
 	} else if m.busy {
-		b.WriteString(renderBusyLine(modePrompt(m.mode)+m.spinner.View()+statusStyle.Render(" Thinking"), helpStyle.Render("esc cancel"), m.width))
+		label := " Thinking"
+		if thought := m.thinkingLabel(); thought != "" {
+			label += " " + thought
+		}
+		b.WriteString(renderBusyLine(modePrompt(m.mode)+m.spinner.View()+statusStyle.Render(label), helpStyle.Render("esc cancel"), m.width))
 	} else {
 		if menu := m.renderComplete(); menu != "" {
 			b.WriteString(menu)
@@ -782,7 +919,7 @@ func (m *chatModel) View() string {
 	if !m.busy && !m.inApprovalMode() {
 		usage = formatUsageStatus(m.modelName, m.messages)
 	}
-	b.WriteString(renderStatusSuffix(m.modelName, m.workspacePath, usage, contextPercent(m.modelName, m.systemPrompt, m.messages, m.input.Value()), m.busy, m.width))
+	b.WriteString(renderStatusSuffix(m.modelName, m.workspacePath, usage, contextPercent(m.modelName, m.systemPrompt, m.messages, m.input.Value()), m.busy, m.thinkingLabel(), m.width))
 
 	return b.String()
 }
@@ -805,7 +942,7 @@ func renderBusyLine(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-func renderStatusSuffix(model, workspace, usage string, contextPct int, thinking bool, width int) string {
+func renderStatusSuffix(model, workspace, usage string, contextPct int, thinking bool, thought string, width int) string {
 	if model == "" {
 		model = "model"
 	}
@@ -816,6 +953,9 @@ func renderStatusSuffix(model, workspace, usage string, contextPct int, thinking
 	}
 	if thinking {
 		right += " | thinking"
+		if thought != "" {
+			right += " " + thought
+		}
 	}
 	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {

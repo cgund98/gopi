@@ -24,6 +24,24 @@ func TestFloorSurvivesGitignoreNegation(t *testing.T) {
 	patternMatching(t, rules.DenyRead, filepath.Join(root, "debug.log"))
 }
 
+func TestSecretFilesAreProtected(t *testing.T) {
+	token := filepath.Join(t.TempDir(), "gcal_token.json")
+	rules, err := Build(t.TempDir(), t.TempDir(), "", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := rules.MatchRead(token); !ok || id != "secret "+token {
+		t.Fatalf("read rule = %q %v", id, ok)
+	}
+	if _, ok := rules.MatchWrite(token); !ok {
+		t.Fatal("secret file is writable")
+	}
+	if _, ok := rules.MatchRead(token + ".bak"); ok {
+		t.Fatal("rule matched a sibling file")
+	}
+	patternMatching(t, rules.DenyRead, token)
+}
+
 func TestUntranslatableIgnoreFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("foo[0-9]\n"), 0o600); err != nil {

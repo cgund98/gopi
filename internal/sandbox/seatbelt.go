@@ -6,7 +6,9 @@ import (
 )
 
 // SeatbeltProfile renders a Seatbelt profile for sandbox-exec.
-// Seatbelt is last-match-wins, so protected-path denials follow the workspace allow.
+// Seatbelt is last-match-wins. Session read grants follow the workspace roots,
+// then the protected-path denials are applied again. A per-call extra read
+// still follows those denials, so one approved protected file stays readable.
 func SeatbeltProfile(profile Profile) (string, error) {
 	switch profile.Network {
 	case "", NetworkDeny, NetworkAllowlist, NetworkUnrestricted:
@@ -36,6 +38,9 @@ func SeatbeltProfile(profile Profile) (string, error) {
 	for _, root := range profile.WriteRoots {
 		writeSubpath(&b, "allow file-write*", root)
 		writeSubpath(&b, "allow file-read*", root)
+	}
+	for _, path := range profile.SessionReads {
+		writeSubpath(&b, "allow file-read*", path)
 	}
 	for _, pattern := range profile.DenyRead {
 		writeRegex(&b, "deny file-read*", pattern)

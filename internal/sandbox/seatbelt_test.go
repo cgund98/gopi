@@ -78,6 +78,27 @@ func TestSeatbeltDeniesAfterWorkspaceAllow(t *testing.T) {
 	}
 }
 
+func TestSeatbeltSessionGrantThenFloor(t *testing.T) {
+	dir := "/Users/me/other"
+	env := dir + "/.env"
+	body, err := SeatbeltProfile(Profile{
+		ReadRoots:    []string{"/Users/me/work"},
+		SessionReads: []string{dir},
+		DenyRead:     []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$"},
+		ExtraReads:   []string{env},
+		Network:      NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := strings.Index(body, `(allow file-read* (subpath "`+dir+`"))`)
+	deny := strings.LastIndex(body, `(deny file-read* (regex "^(.*/)?\\.[eE][nN][vV](/.*)?$"))`)
+	extra := strings.Index(body, `(allow file-read* (subpath "`+env+`"))`)
+	if allow < 0 || deny < 0 || extra < 0 || allow >= deny || deny >= extra {
+		t.Fatalf("session allow, then floor deny, then approved file:\n%s", body)
+	}
+}
+
 func TestLaunchEcho(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS")

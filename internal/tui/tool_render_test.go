@@ -35,6 +35,40 @@ func TestEditHeadlineAndDiff(t *testing.T) {
 	}
 }
 
+func TestSearchWithBlockedPathsShowsSummary(t *testing.T) {
+	result := `{"blocked_paths":["scratch"],"denied":[{"error":"access_denied","message":"protected path scratch","path":"scratch"}],"files":["go.mod"],"message":"The sandbox blocked file access.","truncated":false}`
+	for _, name := range []string{"find", "grep"} {
+		card := toolCardView{ToolName: name, State: toolCardCompleted, Result: result}
+		if hideToolResult(card) {
+			t.Fatalf("%s: blocked result hidden", name)
+		}
+		got := renderFriendlyResult(card, result, 80)
+		if !strings.Contains(got, "Blocked: scratch") || strings.Contains(got, "{") {
+			t.Fatalf("%s: rendered = %q", name, got)
+		}
+	}
+	clean := toolCardView{ToolName: "find", State: toolCardCompleted, Result: `{"files":["go.mod"],"truncated":false}`}
+	if !hideToolResult(clean) {
+		t.Fatal("clean find result should stay hidden")
+	}
+}
+
+func TestFailedEditHidesDiff(t *testing.T) {
+	args := json.RawMessage(`{"path":"demo.txt","old":"alpha","new":"beta"}`)
+	for _, card := range []toolCardView{
+		{ToolName: "edit_file", Args: args, State: toolCardFailed, Result: `{"error":"old text was not found"}`},
+		{ToolName: "edit_file", Args: args, State: toolCardCompleted, Result: `{"error":"access_denied","path":"demo.txt"}`},
+	} {
+		if body := renderToolBody(card, 80); body != "" {
+			t.Fatalf("state %s: diff = %q", card.State, body)
+		}
+	}
+	pending := toolCardView{ToolName: "edit_file", Args: args, State: toolCardPending}
+	if renderApprovalBody(pending, 80) == "" {
+		t.Fatal("approval card should still show the diff")
+	}
+}
+
 func TestDiffHeaderFitsFrame(t *testing.T) {
 	card := toolCardView{
 		ToolName: "edit_file",
@@ -225,7 +259,7 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		ToolName: "read_file",
 		Args:     json.RawMessage(`{"path":".env"}`),
 		Reason:   "Protected path **/.env: scratch/demo/.env",
-	}, 60))
+	}, nil, 60))
 	if !strings.Contains(view, "read .env") || !strings.Contains(view, "Protected path **/.env: scratch/demo/.env") || strings.Contains(view, `"path"`) {
 		t.Fatalf("prompt = %q", view)
 	}
@@ -234,7 +268,7 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		ToolName: "shell",
 		Args:     json.RawMessage(`{"command":"cat .env","read_paths":[".env"]}`),
 		Reason:   "Elevated file access: read /work/.env",
-	}, 60))
+	}, nil, 60))
 	if !strings.Contains(shell, "$ cat .env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
 		t.Fatalf("shell prompt = %q", shell)
 	}
@@ -243,7 +277,7 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		ToolName: "custom",
 		Args:     json.RawMessage(`{"query":"hi"}`),
 		Reason:   "approval required",
-	}, 60))
+	}, nil, 60))
 	if !strings.Contains(unknown, `"query"`) {
 		t.Fatalf("unknown prompt = %q", unknown)
 	}

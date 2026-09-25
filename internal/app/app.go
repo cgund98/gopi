@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/cgund98/gogent"
@@ -15,6 +16,7 @@ import (
 	"github.com/cgund98/gopi/internal/prompt"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/tools"
+	"github.com/cgund98/gopi/internal/toolview"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
 )
@@ -41,7 +43,12 @@ type Session struct {
 	Edit      *tools.EditFile
 	WritePlan *tools.WritePlan
 	Tasks     *tools.TaskList
+	Grants    *tools.ReadGrants
 	Mode      Mode
+	// Renderers holds custom tools that implement toolview.Renderer, by name, across all modes.
+	Renderers map[string]toolview.Renderer
+	// Redact removes secret values from text shown in the UI.
+	Redact func(string) string
 
 	registries map[Mode]*gogent.ToolRegistry
 	extra      map[Mode][]gogent.Tool
@@ -55,18 +62,25 @@ type Session struct {
 // extra adds tools to a mode. A name that matches a built-in tool is an error.
 // Extra tools are not registered on the delegate child.
 func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace, extra map[Mode][]gogent.Tool) (*Session, error) {
-	rules, err := policy.Build(root.Path, cfg.HomeDir, "")
+	secretFiles := make([]string, 0, len(cfg.SecretFiles))
+	for _, path := range cfg.SecretFiles {
+		secretFiles = append(secretFiles, path)
+	}
+	sort.Strings(secretFiles)
+	rules, err := policy.Build(root.Path, cfg.HomeDir, "", secretFiles...)
 	if err != nil {
 		return nil, fmt.Errorf("build path policy: %w", err)
 	}
 	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust, Rules: rules}
 	plan := &tools.WritePlan{Root: root, Workspace: workspaceTrust}
+	grants := &tools.ReadGrants{}
 	read := []gogent.Tool{
-		&tools.ReadFile{Root: root, Rules: rules},
-		&tools.Grep{Root: root, Rules: rules},
-		&tools.Find{Root: root, Rules: rules},
+		&tools.ReadFile{Root: root, Rules: rules, Grants: grants},
+		&tools.Grep{Root: root, Rules: rules, Grants: grants},
+		&tools.Find{Root: root, Rules: rules, Grants: grants},
+		&tools.GrantRead{Root: root, Grants: grants},
 	}
-	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets}
+	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets, Grants: grants, SecretFiles: secretFiles, HostOnly: cfg.HostOnly}
 	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets[gopisecrets.SearchAPIKey]}
 	fetch := &tools.WebFetch{}
 	taskList := tools.NewTaskList(root)
@@ -84,7 +98,10 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		Edit:       edit,
 		WritePlan:  plan,
 		Tasks:      taskList,
+		Grants:     grants,
 		Mode:       ModeAgent,
+		Renderers:  collectRenderers(extra),
+		Redact:     redact,
 		registries: map[Mode]*gogent.ToolRegistry{},
 		extra:      extra,
 		models:     newModelFactory(cfg),
@@ -92,18 +109,19 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		basePrompt: text,
 	}
 	delegate := &tools.Delegate{
-		Root:       root,
-		Rules:      rules,
-		HomeDir:    cfg.HomeDir,
-		Network:    cfg.Network,
-		AllowHosts: cfg.AllowHosts,
-		DenyHosts:  cfg.DenyHosts,
-		Redact:     redact,
+		Root:        root,
+		Rules:       rules,
+		HomeDir:     cfg.HomeDir,
+		Network:     cfg.Network,
+		AllowHosts:  cfg.AllowHosts,
+		DenyHosts:   cfg.DenyHosts,
+		SecretFiles: secretFiles,
+		Redact:      redact,
 		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
 			return session.models.New(session.active, registry, session.basePrompt)
 		},
 	}
-	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch, tasks)
+	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch, tasks, &tools.UpdatePlan{Inner: plan})
 	askTools := append(append([]gogent.Tool{}, read...), search, fetch)
 	planTools := append(append([]gogent.Tool{}, read...), plan, search, fetch)
 	agentTools = append(agentTools, extra[ModeAgent]...)
@@ -136,6 +154,19 @@ func (s *Session) ExtraTools() map[Mode][]gogent.Tool {
 	return s.extra
 }
 
+// collectRenderers must run on the unwrapped tools: WrapRedacting hides the interface.
+func collectRenderers(extra map[Mode][]gogent.Tool) map[string]toolview.Renderer {
+	out := map[string]toolview.Renderer{}
+	for _, list := range extra {
+		for _, tool := range list {
+			if renderer, ok := tool.(toolview.Renderer); ok {
+				out[tool.Name()] = renderer
+			}
+		}
+	}
+	return out
+}
+
 func registerTools(list []gogent.Tool, redact func(string) string) (*gogent.ToolRegistry, error) {
 	registry := gogent.NewToolRegistry()
 	for _, tool := range list {
@@ -164,10 +195,11 @@ func (s *Session) ModelOverrides() map[string]string {
 }
 
 // SetModelOverrides restores names chosen in an earlier session.
+// A name no longer in the catalog is dropped so the mode falls back to config.
 func (s *Session) SetModelOverrides(overrides map[string]string) {
 	s.overrides = map[Mode]string{}
 	for mode, name := range overrides {
-		if name == "" {
+		if _, _, err := models.Parse(name); err != nil {
 			continue
 		}
 		s.overrides[Mode(mode)] = name

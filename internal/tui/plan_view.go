@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/tools"
 )
 
@@ -46,7 +47,9 @@ func (m *chatModel) noticeWrittenPlans() {
 		if err := json.Unmarshal([]byte(message.Content), &payload); err != nil || payload.Error != "" || payload.Path == "" {
 			continue
 		}
-		m.openPlan(payload.Path)
+		if m.mode == app.ModePlan {
+			m.openPlan(payload.Path)
+		}
 	}
 }
 
@@ -118,10 +121,8 @@ func (m *chatModel) handlePlanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.buildPlan()
-	case "up", "down", "pgup", "pgdown", "home", "end":
-		var cmd tea.Cmd
-		m.planVP, cmd = m.planVP.Update(msg)
-		return m, cmd
+	case "up", "down", "pgup", "pgdown", "home", "end", "shift+up", "shift+down":
+		return m, scrollViewport(&m.planVP, msg)
 	default:
 		return m, nil
 	}

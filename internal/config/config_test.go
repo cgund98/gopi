@@ -23,7 +23,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Model != "gpt-4o-mini" {
+	if cfg.Model != "gpt-5.6-terra" {
 		t.Fatalf("model = %q", cfg.Model)
 	}
 	if cfg.MaxIterations != 10 {
@@ -117,7 +117,7 @@ func TestLoadModeModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := []byte(`
-model = "gpt-4o-mini"
+model = "gpt-5.6-luna"
 
 [models]
 agent = "gpt-4o"
@@ -133,7 +133,7 @@ build = "kimi/kimi-k2.6"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ModelFor("agent") != "gpt-4o" || cfg.ModelFor("ask") != "gpt-4o-mini" || cfg.BuildModelName() != "kimi/kimi-k2.6" {
+	if cfg.ModelFor("agent") != "gpt-4o" || cfg.ModelFor("ask") != "gpt-5.6-luna" || cfg.BuildModelName() != "kimi/kimi-k2.6" {
 		t.Fatalf("models = %+v", cfg)
 	}
 	if cfg.KimiAPIKey != "kimi" {

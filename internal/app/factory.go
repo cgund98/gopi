@@ -34,7 +34,11 @@ func (f *modelFactory) New(name string, registry *gogent.ToolRegistry, systemPro
 		if f.kimiKey == "" {
 			return nil, fmt.Errorf("%s is required", gopisecrets.KimiAPIKey)
 		}
-		return kimi.NewChat(f.kimiKey, registry).WithModel(modelID).WithSystemPrompt(systemPrompt).Build()
+		var opts []kimi.Option
+		if entry, _ := models.Lookup(name); entry.DisableThinking {
+			opts = append(opts, kimi.WithoutThinking())
+		}
+		return kimi.NewChat(f.kimiKey, registry, opts...).WithModel(modelID).WithSystemPrompt(systemPrompt).Build()
 	default:
 		if f.openaiKey == "" {
 			return nil, fmt.Errorf("OPENAI_API_KEY is required")

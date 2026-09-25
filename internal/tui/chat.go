@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -28,8 +29,9 @@ func renderTranscript(
 	selectedTool int,
 	width int,
 	showUsage bool,
+	thoughts map[string]time.Duration,
 ) string {
-	return renderTranscriptProgress(messages, cards, selectedTool, width, showUsage, nil)
+	return renderTranscriptProgress(messages, cards, selectedTool, width, showUsage, nil, thoughts)
 }
 
 func renderTranscriptProgress(
@@ -39,6 +41,7 @@ func renderTranscriptProgress(
 	width int,
 	showUsage bool,
 	progress func(done, total int),
+	thoughts map[string]time.Duration,
 ) string {
 	if len(messages) == 0 {
 		return helpStyle.Render("Send a message to get started.")
@@ -110,11 +113,9 @@ func renderTranscriptProgress(
 					}
 				}
 			}
-			if i == usageAt {
-				if line := formatTurnUsage(message.Usage); line != "" {
-					b.WriteByte('\n')
-					b.WriteString(toolDimStyle.Render(line))
-				}
+			if line := turnSummaryLine(showUsage, i == usageAt, message, thoughts); line != "" {
+				b.WriteByte('\n')
+				b.WriteString(toolDimStyle.Render(line))
 			}
 			previousRole = gogent.MessageRoleAssistant
 
@@ -133,6 +134,29 @@ func renderTranscriptProgress(
 	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func turnSummaryLine(showFooter, isUsage bool, message gogent.Message, worked map[string]time.Duration) string {
+	if !showFooter {
+		return ""
+	}
+	usage := ""
+	if isUsage {
+		usage = formatTurnUsage(message.Usage)
+	}
+	workedLine := ""
+	if worked != nil && message.ID != "" {
+		if d, ok := worked[message.ID]; ok && d >= 0 {
+			workedLine = "Worked for " + formatThought(d)
+		}
+	}
+	if usage == "" {
+		return workedLine
+	}
+	if workedLine == "" {
+		return usage
+	}
+	return usage + "  " + workedLine
 }
 
 func continuesAssistantTurn(role gogent.MessageRole) bool {
@@ -295,11 +319,12 @@ func syncTranscriptViewport(
 	selectedTool int,
 	followEnd bool,
 	showUsage bool,
+	thoughts map[string]time.Duration,
 ) {
 	atBottom := vp.AtBottom()
 	offset := vp.YOffset
 
-	vp.SetContent(renderTranscript(messages, cards, selectedTool, vp.Width, showUsage))
+	vp.SetContent(renderTranscript(messages, cards, selectedTool, vp.Width, showUsage, thoughts))
 
 	if followEnd || atBottom {
 		vp.GotoBottom()

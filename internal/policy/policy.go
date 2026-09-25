@@ -35,9 +35,15 @@ type compiledRule struct {
 }
 
 // Build unions the security floor, ~/.gopi/ignore, and repo gitignore files.
+// protected adds files that secrets.toml references, denied for reads and writes.
 // A pattern that cannot be translated fails closed.
-func Build(workspace, gopiHome, binaryPath string) (Rules, error) {
+func Build(workspace, gopiHome, binaryPath string, protected ...string) (Rules, error) {
 	var rules Rules
+	for _, path := range protected {
+		if err := rules.add("secret "+path, "^"+foldLiteral(path)+"$", true, true); err != nil {
+			return Rules{}, err
+		}
+	}
 	for _, glob := range FloorGlobs {
 		pattern, err := globToRegex(glob, "")
 		if err != nil {

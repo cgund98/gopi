@@ -76,6 +76,12 @@ func (m *chatModel) handleReviewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.reviewScroll = -1
 		}
 		return m, nil
+	case "shift+up", "shift+down":
+		if m.reviewPane == reviewPaneFile {
+			delta, _ := fastScroll(msg)
+			m.scrollReview(delta)
+		}
+		return m, nil
 	case "pgup":
 		if m.reviewPane == reviewPaneFile {
 			m.scrollReview(-(m.reviewPage()))
@@ -97,6 +103,12 @@ func (m *chatModel) handleReviewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "x":
 		m.decideHunk(false)
+		return m, nil
+	case "A":
+		m.decideFile(true)
+		return m, nil
+	case "X":
+		m.decideFile(false)
 		return m, nil
 	default:
 		return m, nil
@@ -150,6 +162,28 @@ func (m *chatModel) decideHunk(approve bool) {
 		m.reviewErr = err.Error()
 		return
 	}
+	m.finishDecision(entry)
+}
+
+func (m *chatModel) decideFile(approve bool) {
+	entry, hunks := m.currentReview()
+	if entry.Path == "" || len(hunks) == 0 {
+		return
+	}
+	if approve {
+		for _, hunk := range hunks {
+			if !containsString(entry.Approved, hunk.ID) {
+				entry.Approved = append(entry.Approved, hunk.ID)
+			}
+		}
+	} else if err := m.rejectFile(entry, hunks); err != nil {
+		m.reviewErr = err.Error()
+		return
+	}
+	m.finishDecision(entry)
+}
+
+func (m *chatModel) finishDecision(entry session.ReviewEntry) {
 	m.reviewErr = ""
 	if len(m.trackedHunks(entry)) == 0 {
 		if err := m.dropReview(entry.Path); err != nil {
@@ -171,7 +205,7 @@ func (m *chatModel) decideHunk(approve bool) {
 		m.reviewCursor = len(files) - 1
 		m.reviewHunk = 0
 	}
-	if _, hunks = m.currentReview(); m.reviewHunk >= len(hunks) {
+	if _, hunks := m.currentReview(); m.reviewHunk >= len(hunks) {
 		m.reviewHunk = 0
 	}
 }
@@ -185,6 +219,31 @@ func (m *chatModel) rejectHunk(entry session.ReviewEntry, hunk review.Hunk) erro
 	next, err := review.Reject(string(body), hunk)
 	if err != nil {
 		return err
+	}
+	if next == "" && entry.Created {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return os.WriteFile(path, []byte(next), 0o644)
+}
+
+// rejectFile applies rejects bottom-up so earlier hunks keep their line positions,
+// and writes nothing if any hunk no longer matches.
+func (m *chatModel) rejectFile(entry session.ReviewEntry, hunks []review.Hunk) error {
+	path := m.reviewDiskPath(entry.Path)
+	body, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	ordered := append([]review.Hunk(nil), hunks...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].NewStart > ordered[j].NewStart })
+	next := string(body)
+	for _, hunk := range ordered {
+		if next, err = review.Reject(next, hunk); err != nil {
+			return err
+		}
 	}
 	if next == "" && entry.Created {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -355,12 +414,22 @@ func (m *chatModel) renderReview() string {
 		b.WriteString(wrapStyled(m.reviewErr, errStyle, m.width))
 	}
 	b.WriteByte('\n')
-	help := "up down file · tab viewer · n p hunk · a approve · x reject · esc back"
+	help := "up down file · tab viewer · n p hunk · a x hunk · A X file · esc back"
 	if m.reviewPane == reviewPaneFile {
-		help = "up down scroll · tab tree · n p hunk · a approve · x reject · esc back"
+		help = "↑↓ scroll · shift fast · tab tree · n p hunk · a x hunk · A X file · esc"
 	}
-	b.WriteString(renderBusyLine(helpStyle.Render(help), helpStyle.Render("Review Mode"), width))
+	b.WriteString(reviewHelpLine(help, width))
 	return b.String()
+}
+
+// reviewHelpLine keeps the help on one row. A wrapped row would push the
+// file header off the top of the screen.
+func reviewHelpLine(help string, width int) string {
+	const label = "Review Mode"
+	if lipgloss.Width(help)+1+lipgloss.Width(label) <= width {
+		return renderBusyLine(helpStyle.Render(help), helpStyle.Render(label), width)
+	}
+	return helpStyle.Render(truncateWidth(help, width))
 }
 
 func (m *chatModel) renderReviewFile(width, height int) string {
@@ -382,8 +451,25 @@ func (m *chatModel) renderReviewFile(width, height int) string {
 	if err == nil {
 		current = string(body)
 	}
-	fileLines, focus := renderFileWithDiff(current, hunks, focusID, width)
-	viewH := height - 1
+	rows, focusRow := renderFileWithDiff(current, hunks, focusID, width)
+	var fileLines []string
+	focus := 0
+	for i, row := range rows {
+		if i == focusRow {
+			focus = len(fileLines)
+		}
+		fileLines = append(fileLines, strings.Split(row, "\n")...)
+	}
+	counts := diffAddStyle.Render(fmt.Sprintf("+%d", added)) + " " + diffDelStyle.Render(fmt.Sprintf("−%d", deleted))
+	nameWidth := width - lipgloss.Width(counts) - 1
+	if nameWidth < 1 {
+		nameWidth = 1
+	}
+	nameParts := wrapWidth(entry.Path, nameWidth)
+	if len(nameParts) == 0 {
+		nameParts = []string{""}
+	}
+	viewH := height - len(nameParts)
 	if viewH < 1 {
 		viewH = 1
 	}
@@ -403,15 +489,8 @@ func (m *chatModel) renderReviewFile(width, height int) string {
 			m.reviewScroll = start
 		}
 		fileLines = fileLines[start : start+viewH]
-	}
-	counts := diffAddStyle.Render(fmt.Sprintf("+%d", added)) + " " + diffDelStyle.Render(fmt.Sprintf("−%d", deleted))
-	nameWidth := width - lipgloss.Width(counts) - 1
-	if nameWidth < 1 {
-		nameWidth = 1
-	}
-	nameParts := wrapWidth(entry.Path, nameWidth)
-	if len(nameParts) == 0 {
-		nameParts = []string{""}
+	} else if m.reviewPane == reviewPaneFile {
+		m.reviewScroll = 0
 	}
 	name := m.reviewPaneTitle(nameParts[0], m.reviewPane == reviewPaneFile)
 	gap := width - lipgloss.Width(name) - lipgloss.Width(counts)
@@ -576,7 +655,7 @@ func renderReviewLine(oldNo, newNo, gutter int, sign, text string, style lipglos
 	if textWidth < 1 {
 		textWidth = 1
 	}
-	parts := wrapWidth(text, textWidth)
+	parts := wrapWidth(expandTabs(text), textWidth)
 	if len(parts) == 0 {
 		parts = []string{""}
 	}
@@ -590,6 +669,29 @@ func renderReviewLine(oldNo, newNo, gutter int, sign, text string, style lipglos
 		lines = append(lines, pad+style.Render(part))
 	}
 	return strings.Join(lines, "\n")
+}
+
+const reviewTabWidth = 4
+
+// expandTabs replaces tabs with spaces to the next tab stop. Width measurement
+// counts a tab as one column, while the terminal draws it up to the next stop.
+func expandTabs(text string) string {
+	if !strings.Contains(text, "\t") {
+		return text
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range text {
+		if r == '\t' {
+			spaces := reviewTabWidth - col%reviewTabWidth
+			b.WriteString(strings.Repeat(" ", spaces))
+			col += spaces
+			continue
+		}
+		b.WriteRune(r)
+		col += lipgloss.Width(string(r))
+	}
+	return b.String()
 }
 
 func splitFileLines(text string) []string {
