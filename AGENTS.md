@@ -12,10 +12,12 @@ Gopi is a personal coding agent: a terminal UI over the gogent library. Start wi
 | `internal/prompt` | Built-in system prompt |
 | `internal/trust` | Workspace trust decisions in `~/.gopi/trust.json` |
 | `internal/workspace` | Canonical workspace root and path confinement |
-| `internal/tools` | `read_file`, `grep`, `find`, and `edit_file` |
+| `internal/tools` | `read_file`, `grep`, `find`, `shell`, and `edit_file` |
+| `internal/sandbox` | macOS Seatbelt launcher for `shell` |
+| `internal/policy` | Security floor and ignore rules for the sandbox |
 | `internal/tui` | Bubble Tea chat, adapted from `gogent/examples/tui` |
 
-Sandbox, secrets, skills, and per-call approval are later milestones described in [ARCHITECTURE.md](ARCHITECTURE.md). Do not add them while finishing the session slice.
+Sandbox secrets, skills, and per-call approval are later milestones described in [ARCHITECTURE.md](ARCHITECTURE.md). The macOS `shell` sandbox is in place. Do not add the later milestones while finishing this slice.
 
 ## Working rules
 

@@ -127,4 +127,22 @@ func TestReadAndGrepHeadlines(t *testing.T) {
 	if got := toolHeadline(find); got != "find .go" {
 		t.Fatalf("find headline = %q", got)
 	}
+	shell := toolCardView{ToolName: "shell", Args: json.RawMessage(`{"command":"go test"}`)}
+	if got := toolHeadline(shell); got != "shell go test" {
+		t.Fatalf("shell headline = %q", got)
+	}
+}
+
+func TestShellOutputIsFramed(t *testing.T) {
+	body := renderFriendlyResult(toolCardView{ToolName: "shell"}, `{"stdout":"ok","stderr":"","exit_code":0}`, 60)
+	plain := stripANSI(body)
+	if !strings.Contains(plain, "ok") || !strings.Contains(plain, "╭") {
+		t.Fatalf("shell frame = %q", plain)
+	}
+	long := strings.Repeat("line\n", 20)
+	truncated := renderFriendlyResult(toolCardView{ToolName: "shell"}, fmt.Sprintf(`{"stdout":%q,"stderr":"","exit_code":0}`, long), 60)
+	plain = stripANSI(truncated)
+	if strings.Count(plain, "\n│ line") != shellPreviewLines || !strings.Contains(plain, "15 more lines") {
+		t.Fatalf("shell preview = %q", plain)
+	}
 }

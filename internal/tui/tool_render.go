@@ -10,6 +10,7 @@ import (
 
 const maxDiffLines = 12
 const readPreviewLines = 8
+const shellPreviewLines = 5
 
 func toolHeadline(card toolCardView) string {
 	switch card.ToolName {
@@ -31,6 +32,11 @@ func toolHeadline(card toolCardView) string {
 		return searchHeadline("grep", card.Args)
 	case "find":
 		return searchHeadline("find", card.Args)
+	case "shell":
+		if command := stringArg(card.Args, "command"); command != "" {
+			return "shell " + command
+		}
+		return "shell"
 	default:
 		return card.ToolName
 	}
@@ -115,9 +121,64 @@ func renderFriendlyResult(card toolCardView, content string, width int) string {
 			body += "\n" + toolDimStyle.Render(fmt.Sprintf("  … %d more files", hidden))
 		}
 		return toolResultStyle.Render(body)
+	case "shell":
+		var payload struct {
+			Stdout    string `json:"stdout"`
+			Stderr    string `json:"stderr"`
+			ExitCode  int    `json:"exit_code"`
+			Truncated bool   `json:"truncated"`
+		}
+		if err := json.Unmarshal([]byte(content), &payload); err != nil {
+			return ""
+		}
+		return renderShellOutput(payload.Stdout, payload.Stderr, payload.ExitCode, payload.Truncated, width)
 	default:
 		return ""
 	}
+}
+
+func renderShellOutput(stdout, stderr string, exitCode int, truncated bool, width int) string {
+	var combined strings.Builder
+	if strings.TrimSpace(stdout) != "" {
+		combined.WriteString(strings.TrimRight(stdout, "\n"))
+	}
+	if strings.TrimSpace(stderr) != "" {
+		if combined.Len() > 0 {
+			combined.WriteByte('\n')
+		}
+		combined.WriteString(strings.TrimRight(stderr, "\n"))
+	}
+	preview, hidden := previewLines(combined.String(), shellPreviewLines)
+	var lines []string
+	if strings.TrimSpace(preview) != "" {
+		lines = strings.Split(preview, "\n")
+	}
+	if hidden > 0 {
+		lines = append(lines, fmt.Sprintf("… %d more lines", hidden))
+	} else if truncated {
+		lines = append(lines, "… truncated")
+	}
+	if exitCode != 0 {
+		lines = append(lines, fmt.Sprintf("exit %d", exitCode))
+	}
+	if len(lines) == 0 {
+		lines = []string{"(no output)"}
+	}
+
+	frameWidth := width - 2
+	if frameWidth < 28 {
+		frameWidth = 28
+	}
+	inner := frameWidth - 2
+	textWidth := inner - diffFrameStyle.GetHorizontalPadding()
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	var body []string
+	for _, line := range lines {
+		body = append(body, toolDimStyle.Render(truncateWidth(line, textWidth)))
+	}
+	return diffFrameStyle.Width(inner).Render(strings.Join(body, "\n"))
 }
 
 func searchHeadline(name string, args json.RawMessage) string {

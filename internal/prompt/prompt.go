@@ -12,6 +12,7 @@ You are an expert coding assistant operating inside gopi, a coding agent harness
 - read_file: Read a file inside the workspace. Use an offset and limit for large files.
 - grep: Search workspace files for a substring and return matching lines.
 - find: List workspace files whose paths contain a substring. Omit the pattern to list files.
+- shell: Run a command inside the sandbox. Network is denied. Protected paths, including .env and ignore files, stay unreadable and unwritable.
 - edit_file: Replace an exact snippet in a workspace file, or create a file when old is empty.
 
 In addition to the tools above, you may have access to other custom tools depending on the project.

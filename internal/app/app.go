@@ -40,6 +40,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		&tools.ReadFile{Root: root},
 		&tools.Grep{Root: root},
 		&tools.Find{Root: root},
+		&tools.Shell{Root: root, HomeDir: cfg.HomeDir},
 		edit,
 	}
 	for _, tool := range fileTools {
