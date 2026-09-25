@@ -44,7 +44,7 @@ func TestChildRegistryOmitsEditAndDelegate(t *testing.T) {
 			t.Fatalf("missing %s in %#v", name, names)
 		}
 	}
-	if names["edit_file"] || names["delegate"] {
+	if names["edit_file"] || names["delegate"] || names["web_search"] {
 		t.Fatalf("child tools = %#v", names)
 	}
 }

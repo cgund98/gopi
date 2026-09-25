@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	"github.com/cgund98/gogent"
@@ -161,13 +162,13 @@ func (m *chatModel) submitApprovalChoice(choice string) tea.Cmd {
 	switch choice {
 	case choiceApprove:
 		m.status = "Running tool…"
-		return runAgent(func() error {
-			return m.agent.ApproveToolCall(m.ctx, m.chatID, messageID, toolCallID)
+		return m.startRun(func(ctx context.Context) error {
+			return m.agent.ApproveToolCall(ctx, m.chatID, messageID, toolCallID)
 		})
 	case choiceReject:
 		m.status = "Rejecting…"
-		return runAgent(func() error {
-			return m.agent.RejectToolCall(m.ctx, m.chatID, messageID, toolCallID)
+		return m.startRun(func(ctx context.Context) error {
+			return m.agent.RejectToolCall(ctx, m.chatID, messageID, toolCallID)
 		})
 	default:
 		m.busy = false

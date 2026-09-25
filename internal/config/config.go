@@ -17,7 +17,7 @@ const (
 	dirName          = ".gopi"
 	configFileName   = "config.toml"
 	systemPromptFile = "system.md"
-	defaultModel     = "gpt-6-sol"
+	defaultModel     = "gpt-4o-mini"
 	defaultMaxIter   = 10
 	homeDirEnv       = "GOPI_HOME"
 	requiredDirMode  = os.FileMode(0o700)
@@ -31,6 +31,7 @@ type File struct {
 	MaxIterations int              `toml:"max_iterations"`
 	Sandbox       SandboxFile      `toml:"sandbox"`
 	Instructions  InstructionsFile `toml:"instructions"`
+	Search        SearchFile       `toml:"search"`
 }
 
 // SandboxFile is the [sandbox] table.
@@ -50,6 +51,11 @@ type HostsFile struct {
 	Deny  []string `toml:"deny"`
 }
 
+// SearchFile is the [search] table.
+type SearchFile struct {
+	Endpoint string `toml:"endpoint"`
+}
+
 // Config is the process configuration for one gopi run.
 type Config struct {
 	Model              string
@@ -65,6 +71,7 @@ type Config struct {
 	ProjectDocMaxBytes int
 	FallbackFiles      []string
 	SkillDirs          []string
+	SearchEndpoint     string
 }
 
 type envSecrets struct {
@@ -154,6 +161,10 @@ func Load(dir string) (Config, error) {
 	if broker["openai_api_key"] != "" {
 		apiKey = broker["openai_api_key"]
 	}
+	endpoint := strings.TrimSpace(file.Search.Endpoint)
+	if endpoint == "" {
+		endpoint = "https://api.search.brave.com/res/v1/web/search"
+	}
 
 	return Config{
 		Model:              file.Model,
@@ -169,6 +180,7 @@ func Load(dir string) (Config, error) {
 		ProjectDocMaxBytes: file.Instructions.ProjectDocMaxBytes,
 		FallbackFiles:      file.Instructions.FallbackFiles,
 		SkillDirs:          file.Instructions.SkillDirs,
+		SearchEndpoint:     endpoint,
 	}, nil
 }
 

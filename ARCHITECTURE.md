@@ -478,28 +478,23 @@ These are part of the core, not polish.
 - **Structured tool errors** that match gogent's existing error style (`access_denied` alongside `execution_failed`) so the model can recover without dumping policy internals.
 - **No secret in argv.** Credentials move through the broker, an env injection the card named, or a short-lived askpass socket.
 
-## Milestones
+## Interaction modes
 
-Build in this order. Later milestones assume the earlier security floor is already enforced.
-
-1. **Session.** TUI, gogent agent, configurable system prompt, `read_file` / `edit_file` / `grep`, `~/.gopi/config.toml`, workspace trust.
-2. **Sandboxed shell on macOS.** Seatbelt launcher, scrubbed env, protected-path floor, `.gitignore` plus `~/.gopi/ignore`, fail closed, escape tests.
-3. **Protected reads.** `RequiresApproval(ctx, args)` in gogent, then `read_file` pauses on protected paths. Secret broker and output redaction.
-4. **Network.** Deny by default. Allowlist proxy. Metadata and private-range denies.
-5. **Linux.** Bubblewrap launcher for the same `Profile` type, with the same escape tests.
-6. **Instructions.** `AGENTS.md` walk and skill catalog.
-7. **Elevation.** Wider `shell` profiles, with the approval card showing `ApprovalDecision.Reason`.
-8. **Subagents.** `delegate` with a narrower registry, depth cap, and user-facing approvals.
-9. **Interaction modes.** The TUI can switch the session among Agent, Ask, and Plan. The mode is a registry and a prompt prefix. It does not weaken the sandbox floor.
-10. **Internet search.** A `web_search` tool. The host sends the query to the search endpoint named in `~/.gopi/config.toml` and returns a short list of titles, URLs, and snippets. The sandboxed `shell` stays on `network: deny`. The tool does not fetch arbitrary URLs, does not follow redirects off the search endpoint, and truncates each result. Snippets are untrusted content, same as a file the model reads.
+The TUI switches the session among Agent, Ask, and Plan with `/agent`, `/ask`, `/plan`, or `/mode <name>`. The mode is a registry and a prompt prefix. It does not weaken the sandbox floor. The active mode is shown at the start of the prompt line and stored on the session, not in the repo. Switching modes starts the next user turn with the new registry and prompt. The existing transcript stays.
 
 | Mode | Tools | What the model does |
 |------|--------|---------------------|
-| Agent | Full set for the current milestone: read, search, edit, and later shell, `web_search`, and delegate | Changes the workspace and runs commands |
-| Ask | Read-only: `read_file`, `grep`, `list_dir`, and later `web_search` | Answers questions about the workspace and, once search exists, the public web. `edit_file` and `shell` are not registered |
-| Plan | Same read-only set as Ask | Explores the workspace and writes a plan in the transcript. No file edits and no shell until the user switches to Agent |
+| Agent | `read_file`, `grep`, `find`, `shell`, `edit_file`, `delegate`, `web_search` | Changes the workspace and runs commands |
+| Ask | `read_file`, `grep`, `find`, `web_search` | Answers questions about the workspace and the public web. `edit_file` and `shell` are not registered |
+| Plan | Ask's tools, plus `write_plan` | Explores, then writes `<workspace>/.gopi/plans/<plan_name>-<uuid>.md`. No file edits and no shell until the user switches to Agent |
 
-The active mode is shown in the composer and stored on the session, not in the repo. Switching modes starts the next user turn with the new registry and prompt. The existing transcript stays. Plan does not auto-apply when the user accepts it; applying the plan is an Agent turn the user starts explicitly.
+Plan does not auto-apply when the user accepts it. Applying the plan is an Agent turn the user starts explicitly. `write_plan` does not ask for approval inside a trusted workspace. A child started by `delegate` does not receive `edit_file`, `delegate`, or `web_search`, and elevated calls fail closed.
+
+## Remaining work
+
+1. **Linux sandbox.** A Bubblewrap launcher for the same `Profile` type, with the same escape tests as Seatbelt. Never execute a `bwrap` discovered inside the workspace.
+2. **Unsandboxed shell and secret injection.** `profile: unsandboxed` is refused. An elevation card does not yet inject named secrets into the command environment, and `git` or `gh` credentials are not brokered through a short-lived helper.
+3. **Session persistence.** The transcript is in memory for one process. A store under `~/.gopi/sessions/` is not built.
 
 ## Gogent constraints to preserve
 

@@ -9,7 +9,6 @@ import (
 )
 
 const maxDiffLines = 12
-const readPreviewLines = 8
 const shellPreviewLines = 5
 
 func toolHeadline(card toolCardView) string {
@@ -42,6 +41,19 @@ func toolHeadline(card toolCardView) string {
 			return "delegate " + task
 		}
 		return "delegate"
+	case "write_plan":
+		if path := stringArg(card.Args, "path"); path != "" {
+			return "plan " + path
+		}
+		if name := stringArg(card.Args, "plan_name"); name != "" {
+			return "plan " + name
+		}
+		return "plan"
+	case "web_search":
+		if query := stringArg(card.Args, "query"); query != "" {
+			return "search " + query
+		}
+		return "search"
 	default:
 		return card.ToolName
 	}
@@ -56,10 +68,15 @@ func renderToolBody(card toolCardView, width int) string {
 }
 
 func hideToolResult(card toolCardView) bool {
-	if card.ToolName != "edit_file" {
+	if strings.Contains(card.Result, `"error"`) {
 		return false
 	}
-	return !strings.Contains(card.Result, `"error"`)
+	switch card.ToolName {
+	case "edit_file", "read_file", "grep", "find", "web_search":
+		return true
+	default:
+		return false
+	}
 }
 
 func renderFriendlyResult(card toolCardView, content string, width int) string {
@@ -70,62 +87,6 @@ func renderFriendlyResult(card toolCardView, content string, width int) string {
 		return ""
 	}
 	switch card.ToolName {
-	case "read_file":
-		var payload struct {
-			Content string `json:"content"`
-		}
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		if strings.TrimSpace(payload.Content) == "" {
-			return toolResultStyle.Render("  (empty)")
-		}
-		preview, hidden := previewLines(payload.Content, readPreviewLines)
-		body := indentBlock(preview, width)
-		if hidden > 0 {
-			body += "\n" + toolDimStyle.Render(fmt.Sprintf("  … %d more lines", hidden))
-		}
-		return toolResultStyle.Render(body)
-	case "grep":
-		var payload struct {
-			Matches []struct {
-				Path string `json:"path"`
-				Line int    `json:"line"`
-				Text string `json:"text"`
-			} `json:"matches"`
-		}
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		if len(payload.Matches) == 0 {
-			return toolResultStyle.Render("  no matches")
-		}
-		var lines []string
-		for _, match := range payload.Matches {
-			lines = append(lines, fmt.Sprintf("%s:%d: %s", match.Path, match.Line, match.Text))
-		}
-		return toolResultStyle.Render(indentBlock(strings.Join(lines, "\n"), width))
-	case "find":
-		var payload struct {
-			Files []string `json:"files"`
-		}
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		if len(payload.Files) == 0 {
-			return toolResultStyle.Render("  no files")
-		}
-		shown := payload.Files
-		hidden := 0
-		if len(shown) > readPreviewLines {
-			hidden = len(shown) - readPreviewLines
-			shown = shown[:readPreviewLines]
-		}
-		body := indentBlock(strings.Join(shown, "\n"), width)
-		if hidden > 0 {
-			body += "\n" + toolDimStyle.Render(fmt.Sprintf("  … %d more files", hidden))
-		}
-		return toolResultStyle.Render(body)
 	case "shell":
 		var payload struct {
 			Stdout    string `json:"stdout"`
@@ -147,6 +108,8 @@ func renderFriendlyResult(card toolCardView, content string, width int) string {
 			return ""
 		}
 		return renderDelegateOutput(payload.Answer, payload.Denied, payload.ToolCalls, width)
+	case "write_plan":
+		return renderPlanResult(card, content, width)
 	default:
 		return ""
 	}
@@ -211,6 +174,35 @@ func renderDelegateOutput(answer string, denied []string, toolCalls int, width i
 		shown = append(shown, fmt.Sprintf("… %d more lines", hidden))
 	}
 	return renderOutputFrame(shown, width)
+}
+
+func renderPlanResult(card toolCardView, content string, width int) string {
+	var payload struct {
+		Path      string `json:"path"`
+		Status    string `json:"status"`
+		Gitignore bool   `json:"gitignore_updated"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil || payload.Path == "" {
+		return ""
+	}
+	verb := "Updated"
+	if payload.Status == "created" {
+		verb = "Created"
+	}
+	inner, textWidth := outputFrameMetrics(width)
+	lines := []string{planTitleStyle.Render(truncateWidth(verb+" "+payload.Path, textWidth))}
+	if payload.Gitignore {
+		lines = append(lines, toolDimStyle.Render(truncateWidth("Added .gopi/plans to .gitignore", textWidth)))
+	}
+	if body := strings.TrimSpace(stringArg(card.Args, "body")); body != "" {
+		preview, hidden := previewLines(body, maxDiffLines)
+		lines = append(lines, "")
+		lines = append(lines, strings.Split(renderMarkdown(preview, textWidth), "\n")...)
+		if hidden > 0 {
+			lines = append(lines, toolDimStyle.Render(fmt.Sprintf("… %d more lines", hidden)))
+		}
+	}
+	return diffFrameStyle.Width(inner).Render(strings.Join(lines, "\n"))
 }
 
 func renderOutputFrame(lines []string, width int) string {

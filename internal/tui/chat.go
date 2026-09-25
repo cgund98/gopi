@@ -28,6 +28,16 @@ func renderTranscript(
 	selectedTool int,
 	width int,
 ) string {
+	return renderTranscriptProgress(messages, cards, selectedTool, width, nil)
+}
+
+func renderTranscriptProgress(
+	messages []gogent.Message,
+	cards []toolCardView,
+	selectedTool int,
+	width int,
+	progress func(done, total int),
+) string {
 	if len(messages) == 0 {
 		return helpStyle.Render("Send a message to get started.")
 	}
@@ -39,7 +49,13 @@ func renderTranscript(
 	first := true
 	var previousRole gogent.MessageRole
 
+	total := len(messages)
+	done := 0
 	for _, message := range messages {
+		done++
+		if progress != nil {
+			progress(done, total)
+		}
 		switch message.Role {
 		case gogent.MessageRoleUser:
 			writeTranscriptGap(&b, &first)
@@ -126,6 +142,9 @@ func renderAssistantContent(message gogent.Message, width int) string {
 
 func renderToolResultMessage(cards []toolCardView, toolCallID string, message gogent.Message, width int) string {
 	if card, ok := toolCardByID(cards, toolCallID); ok {
+		if hideToolResult(card) {
+			return ""
+		}
 		if friendly := renderFriendlyResult(card, message.Content, width); friendly != "" {
 			return friendly
 		}

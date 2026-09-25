@@ -14,7 +14,7 @@ Optional: `-workspace <dir>`. The default workspace is the current directory. Se
 Gopi keeps its files in `~/.gopi`, mode `0700`. `GOPI_HOME` overrides that directory. The first launch creates `config.toml`.
 
 ```toml
-model = "gpt-6-sol"
+model = "gpt-4o-mini"
 max_iterations = 10
 
 [sandbox]
@@ -28,9 +28,14 @@ deny = []                 # a deny entry beats an allow entry
 project_doc_max_bytes = 32768
 fallback_files = []       # extra names beside AGENTS.md; empty by default
 skill_dirs = []           # each entry is a directory of <name>/SKILL.md
+
+[search]
+endpoint = ""             # empty uses Brave Search
 ```
 
 `network` defaults to `deny`. `allowlist` sends shell traffic through a local proxy and still blocks private and metadata addresses. `unrestricted` is not a config setting. A single shell call can ask for `network_hosts` or `network = "unrestricted"`, and that call waits for approval.
+
+`web_search` calls `https://api.search.brave.com/res/v1/web/search` unless `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. The shell sandbox stays on its own network setting.
 
 A `*` in a host pattern matches one DNS label, as in `*.npmjs.org`.
 

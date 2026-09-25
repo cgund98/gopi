@@ -5,7 +5,7 @@ import "testing"
 
 func TestBuiltinFollowsPiShape(t *testing.T) {
 	body := Builtin()
-	for _, want := range []string{"expert coding assistant", "<tools>", "<rules>", "Be concise in your responses", "read_file", "edit_file", "delegate", "untrusted observation", "~/.gopi/config.toml", "sandbox.network.allow", "~/.gopi/skills", "skill_dirs", ".gopi/skills"} {
+	for _, want := range []string{"expert coding assistant", "<tools>", "<rules>", "Be concise in your responses", "read_file", "edit_file", "delegate", "web_search", "untrusted observation", "~/.gopi/config.toml", "sandbox.network.allow", "~/.gopi/skills", "skill_dirs", ".gopi/skills"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("prompt missing %q", want)
 		}

@@ -70,30 +70,23 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
-func TestReadResultIsPlainText(t *testing.T) {
-	card := toolCardView{ToolName: "read_file"}
-	got := renderFriendlyResult(card, `{"path":"demo.txt","content":"hello"}`, 80)
-	if strings.Contains(got, `"content"`) || !strings.Contains(got, "hello") {
-		t.Fatalf("result = %q", got)
+func TestReadResultStaysHidden(t *testing.T) {
+	card := toolCardView{
+		ToolName: "read_file",
+		Result:   `{"path":"demo.txt","content":"hello"}`,
 	}
-}
-
-func TestReadPreviewTruncates(t *testing.T) {
-	var lines []string
-	for i := 1; i <= 20; i++ {
-		lines = append(lines, fmt.Sprintf("line %d", i))
+	if !hideToolResult(card) {
+		t.Fatal("successful read should hide its output")
 	}
-	body, err := json.Marshal(map[string]string{"path": "main.go", "content": strings.Join(lines, "\n")})
-	if err != nil {
-		t.Fatal(err)
+	failed := card
+	failed.Result = `{"error":"access_denied","path":"demo.txt","message":"refused"}`
+	if hideToolResult(failed) {
+		t.Fatal("failed read should stay visible")
 	}
-	got := renderFriendlyResult(toolCardView{ToolName: "read_file"}, string(body), 80)
-	plain := stripANSI(got)
-	if strings.Contains(plain, "line 9") {
-		t.Fatalf("preview included line 9: %q", plain)
-	}
-	if !strings.Contains(plain, "line 8") || !strings.Contains(plain, "12 more lines") {
-		t.Fatalf("preview = %q", plain)
+	for _, name := range []string{"grep", "find"} {
+		if !hideToolResult(toolCardView{ToolName: name, Result: `{"files":["a.go"]}`}) {
+			t.Fatalf("%s result should stay hidden", name)
+		}
 	}
 }
 
@@ -155,6 +148,33 @@ func TestDelegateOutputIsFramed(t *testing.T) {
 		t.Fatalf("delegate frame = %q", plain)
 	}
 	assertFrameContainsLines(t, body)
+}
+
+func TestSearchResultStaysHidden(t *testing.T) {
+	card := toolCardView{
+		ToolName: "web_search",
+		Result:   `{"results":[{"title":"Gopi","url":"https://example.com","snippet":"a coding agent"}]}`,
+	}
+	if !hideToolResult(card) {
+		t.Fatal("successful search should hide its results")
+	}
+	failed := card
+	failed.Result = `{"error":"execution_failed","message":"search_api_key is missing"}`
+	if hideToolResult(failed) {
+		t.Fatal("failed search should stay visible")
+	}
+}
+
+func TestPlanResultIsReadable(t *testing.T) {
+	card := toolCardView{
+		ToolName: "write_plan",
+		Args:     json.RawMessage(`{"plan_name":"ship","body":"# Ship it\n\nWrite the widget."}`),
+	}
+	got := renderFriendlyResult(card, `{"path":".gopi/plans/ship-abc.md","status":"created","gitignore_updated":true}`, 60)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "Created .gopi/plans/ship-abc.md") || !strings.Contains(plain, "Ship it") || !strings.Contains(plain, ".gitignore") || strings.Contains(plain, "gitignore_updated") {
+		t.Fatalf("plan result = %q", plain)
+	}
 }
 
 func TestApprovalPromptShowsReason(t *testing.T) {

@@ -21,7 +21,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Model != "gpt-6-sol" {
+	if cfg.Model != "gpt-4o-mini" {
 		t.Fatalf("model = %q", cfg.Model)
 	}
 	if cfg.MaxIterations != 10 {
@@ -35,6 +35,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Network != "deny" {
 		t.Fatalf("network = %q", cfg.Network)
+	}
+	if cfg.SearchEndpoint != "https://api.search.brave.com/res/v1/web/search" {
+		t.Fatalf("search endpoint = %q", cfg.SearchEndpoint)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config.toml")); err != nil {
 		t.Fatal(err)
