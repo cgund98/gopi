@@ -11,12 +11,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Checkout gogent
-        uses: actions/checkout@v4
-        with:
-          repository: cgund98/gogent
-          path: third_party/gogent
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -29,9 +23,6 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-
-      - name: Point the gogent replace at this checkout
-        run: go mod edit -replace github.com/cgund98/gogent=./third_party/gogent
 
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -49,12 +40,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Checkout gogent
-        uses: actions/checkout@v4
-        with:
-          repository: cgund98/gogent
-          path: third_party/gogent
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -67,9 +52,6 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-
-      - name: Point the gogent replace at this checkout
-        run: go mod edit -replace github.com/cgund98/gogent=./third_party/gogent
 
       - name: Download dependencies
         run: go mod download
