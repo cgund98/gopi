@@ -45,6 +45,8 @@ type Session struct {
 	Tasks     *tools.TaskList
 	Grants    *tools.ReadGrants
 	Mode      Mode
+	// Subagent reports a running delegate call.
+	Subagent *tools.DelegateProgress
 	// Renderers holds custom tools that implement toolview.Renderer, by name, across all modes.
 	Renderers map[string]toolview.Renderer
 	// Redact removes secret values from text shown in the UI.
@@ -100,6 +102,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		Tasks:      taskList,
 		Grants:     grants,
 		Mode:       ModeAgent,
+		Subagent:   &tools.DelegateProgress{},
 		Renderers:  collectRenderers(extra),
 		Redact:     redact,
 		registries: map[Mode]*gogent.ToolRegistry{},
@@ -117,6 +120,8 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		DenyHosts:   cfg.DenyHosts,
 		SecretFiles: secretFiles,
 		Redact:      redact,
+		Grants:      grants,
+		Progress:    session.Subagent,
 		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
 			return session.models.New(session.active, registry, session.basePrompt)
 		},

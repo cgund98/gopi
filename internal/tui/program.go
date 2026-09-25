@@ -119,6 +119,7 @@ func (m *programModel) bindChat(session *app.Session) {
 	m.chat.registry = session.Registry
 	m.chat.events = session.Events
 	m.chat.renderers = safeRenderers(session.Renderers, session.Redact)
+	m.chat.subagent = session.Subagent
 	m.chat.modelName = session.ActiveModel()
 	m.chat.modelOverrides = session.ModelOverrides()
 	m.chat.workspacePath = session.Root.Path

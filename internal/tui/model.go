@@ -33,6 +33,7 @@ type chatModel struct {
 	events   *gogent.ChannelBroadcaster
 	// renderers are custom tool renderers, already wrapped by safeRenderers.
 	renderers map[string]toolview.Renderer
+	subagent  *tools.DelegateProgress
 
 	messages         []gogent.Message
 	toolCards        []toolCardView
@@ -417,6 +418,23 @@ func (m *chatModel) thinkingLabel() string {
 		return ""
 	}
 	return formatThought(time.Since(m.workStarted))
+}
+
+// subagentLabel reads like "Subagent 42s · 3 tool calls · grep resume".
+func subagentLabel(status tools.DelegateStatus, now time.Time) string {
+	parts := []string{"Subagent " + formatThought(now.Sub(status.Started))}
+	switch status.ToolCalls {
+	case 0:
+		parts = append(parts, "starting")
+	case 1:
+		parts = append(parts, "1 tool call")
+	default:
+		parts = append(parts, fmt.Sprintf("%d tool calls", status.ToolCalls))
+	}
+	if status.Last != "" {
+		parts = append(parts, status.Last)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func formatThought(d time.Duration) string {
@@ -886,6 +904,10 @@ func (m *chatModel) View() string {
 		if thought := m.thinkingLabel(); thought != "" {
 			label += " " + thought
 		}
+		if status, ok := m.subagent.Snapshot(); ok {
+			label = " " + subagentLabel(status, time.Now())
+		}
+		label = truncateWidth(label, m.width-lipgloss.Width(modePrompt(m.mode))-lipgloss.Width(m.spinner.View())-lipgloss.Width("esc cancel")-1)
 		b.WriteString(renderBusyLine(modePrompt(m.mode)+m.spinner.View()+statusStyle.Render(label), helpStyle.Render("esc cancel"), m.width))
 	} else {
 		if menu := m.renderComplete(); menu != "" {

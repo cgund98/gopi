@@ -62,25 +62,28 @@ func formatDollars(dollars float64) string {
 	return fmt.Sprintf("$%.2f", dollars)
 }
 
+// contextPercent estimates the next request's size. The last reported input count
+// covers the transcript up to that reply; everything after it (the reply itself and
+// tool results) is estimated at four characters per token.
 func contextPercent(modelName, system string, messages []gogent.Message, draft string) int {
 	window := models.ContextWindow(modelName)
+	chars := len(draft)
 	tokens := 0
+	start := 0
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Usage != nil && messages[i].Usage.Input > 0 {
-			tokens = messages[i].Usage.Input + len(draft)/4
+			tokens = messages[i].Usage.Input
+			start = i
 			break
 		}
 	}
 	if tokens == 0 {
-		chars := len(system) + len(draft)
-		for _, message := range messages {
-			chars += len(message.Content)
-			for _, call := range message.ToolCalls {
-				chars += len(call.ToolName) + len(call.Args) + len(call.Result)
-			}
-		}
-		tokens = chars / 4
+		chars += len(system)
 	}
+	for _, message := range messages[start:] {
+		chars += messageChars(message)
+	}
+	tokens += chars / 4
 	if window < 1 {
 		window = 1
 	}
@@ -89,4 +92,14 @@ func contextPercent(modelName, system string, messages []gogent.Message, draft s
 		return 100
 	}
 	return percent
+}
+
+// messageChars counts what is sent to the model. A tool result is sent as its tool
+// message, so the copy stored on the assistant's tool call is not counted.
+func messageChars(message gogent.Message) int {
+	chars := len(message.Content)
+	for _, call := range message.ToolCalls {
+		chars += len(call.ToolName) + len(call.Args)
+	}
+	return chars
 }

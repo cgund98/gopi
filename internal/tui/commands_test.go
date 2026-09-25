@@ -111,7 +111,7 @@ func finishCompact(chat *chatModel, cmd tea.Cmd) *chatModel {
 }
 
 func TestReviewLineWraps(t *testing.T) {
-	line := renderReviewLine(1, 1, 2, " ", strings.Repeat("a", 40), toolResultStyle, 20)
+	line := renderReviewLine(1, 1, 2, reviewRowContext, plainSpans(strings.Repeat("a", 40), reviewRowContext), false, 20)
 	if !strings.Contains(line, "\n") {
 		t.Fatalf("line = %q", line)
 	}

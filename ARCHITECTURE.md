@@ -327,6 +327,7 @@ The child receives:
 - The parent system prompt plus the task string. The task string is user-visible in the parent transcript.
 - A tool registry that is a subset of the parent's: `read_file`, `grep`, `list_dir`, and `shell` whose `RequiresApproval` refuses any profile other than `sandbox` and any protected path by failing the call rather than pausing. No nested `delegate` beyond a configured depth (default 1). The child never pauses for approval.
 - The same or a stricter sandbox profile. A child cannot receive `network: unrestricted` if the parent call was not already approved for it.
+- The parent's session read grants, read-only. The child can read a directory the user already granted this chat, but it has no `grant_read` and cannot add grants. The parent prompt tells the model to call `grant_read` before delegating work outside the workspace.
 
 If a future child tool requires approval, the prompt goes to the user, not to the parent model. The parent model is not a reviewer.
 

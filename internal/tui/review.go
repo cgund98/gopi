@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -451,7 +452,7 @@ func (m *chatModel) renderReviewFile(width, height int) string {
 	if err == nil {
 		current = string(body)
 	}
-	rows, focusRow := renderFileWithDiff(current, hunks, focusID, width)
+	rows, focusRow := renderFileWithDiff(entry.Path, current, hunks, focusID, width)
 	var fileLines []string
 	focus := 0
 	for i, row := range rows {
@@ -581,51 +582,90 @@ func splitReviewPath(path string) []string {
 	return strings.Split(path, "/")
 }
 
-func renderFileWithDiff(current string, hunks []review.Hunk, focusID string, width int) ([]string, int) {
+var (
+	reviewRenderMu   sync.Mutex
+	reviewRenderKey  uint64
+	reviewRenderRows []string
+	reviewRenderAt   int
+)
+
+// renderFileWithDiff draws the whole file with each hunk's old lines above its new
+// lines. The review view redraws on every key, so the last result is reused while
+// the file, hunks, focus, and width are unchanged.
+func renderFileWithDiff(path, current string, hunks []review.Hunk, focusID string, width int) ([]string, int) {
+	keyParts := []string{path, current, focusID, fmt.Sprint(width)}
+	for _, hunk := range hunks {
+		keyParts = append(keyParts, hunk.ID, fmt.Sprint(hunk.NewStart), strings.Join(hunk.Old, "\n"), strings.Join(hunk.New, "\n"))
+	}
+	key := highlightKey(keyParts...)
+	reviewRenderMu.Lock()
+	if key == reviewRenderKey && reviewRenderRows != nil {
+		rows, focus := reviewRenderRows, reviewRenderAt
+		reviewRenderMu.Unlock()
+		return rows, focus
+	}
+	reviewRenderMu.Unlock()
+
+	rows, focus := buildFileWithDiff(path, current, hunks, focusID, width)
+	reviewRenderMu.Lock()
+	reviewRenderKey, reviewRenderRows, reviewRenderAt = key, rows, focus
+	reviewRenderMu.Unlock()
+	return rows, focus
+}
+
+type reviewRowKind int
+
+const (
+	reviewRowContext reviewRowKind = iota
+	reviewRowDeleted
+	reviewRowAdded
+)
+
+func buildFileWithDiff(path, current string, hunks []review.Hunk, focusID string, width int) ([]string, int) {
 	currentLines := splitFileLines(current)
+	currentSpans := highlightLines(path, current)
 	type row struct {
-		oldNo int
-		newNo int
-		sign  string
-		text  string
-		style lipgloss.Style
+		oldNo   int
+		newNo   int
+		kind    reviewRowKind
+		spans   []codeSpan
+		focused bool
 	}
 	var rows []row
 	focus := 0
 	pos := 0
 	oldNo := 1
 	newNo := 1
-	addRow := func(oldN, newN int, sign, text string, style lipgloss.Style) {
-		rows = append(rows, row{oldNo: oldN, newNo: newN, sign: sign, text: text, style: style})
+	spansAt := func(highlighted [][]codeSpan, index int, text string, kind reviewRowKind) []codeSpan {
+		if index < len(highlighted) && spansText(highlighted[index]) == text {
+			return highlighted[index]
+		}
+		return plainSpans(text, kind)
 	}
 	for _, hunk := range hunks {
 		for pos < hunk.NewStart && pos < len(currentLines) {
-			addRow(oldNo, newNo, " ", currentLines[pos], toolResultStyle)
+			rows = append(rows, row{oldNo: oldNo, newNo: newNo, kind: reviewRowContext, spans: spansAt(currentSpans, pos, currentLines[pos], reviewRowContext)})
 			oldNo++
 			newNo++
 			pos++
 		}
-		if hunk.ID == focusID {
+		focused := hunk.ID == focusID
+		if focused {
 			focus = len(rows)
 		}
-		del := diffDelStyle
-		add := diffAddStyle
-		if hunk.ID == focusID {
-			del = del.Bold(true)
-			add = add.Bold(true)
-		}
-		for _, line := range hunk.Old {
-			addRow(oldNo, 0, "-", line, del)
+		oldSpans := highlightLines(path, strings.Join(hunk.Old, "\n"))
+		for i, line := range hunk.Old {
+			rows = append(rows, row{oldNo: oldNo, kind: reviewRowDeleted, spans: spansAt(oldSpans, i, line, reviewRowDeleted), focused: focused})
 			oldNo++
 		}
 		for _, line := range hunk.New {
-			addRow(0, newNo, "+", line, add)
+			rows = append(rows, row{newNo: newNo, kind: reviewRowAdded, spans: spansAt(currentSpans, pos, line, reviewRowAdded), focused: focused})
 			newNo++
 			pos++
 		}
 	}
 	for pos < len(currentLines) {
-		addRow(oldNo, newNo, " ", currentLines[pos], toolResultStyle)
+		rows = append(rows, row{oldNo: oldNo, newNo: newNo, kind: reviewRowContext, spans: spansAt(currentSpans, pos, currentLines[pos], reviewRowContext)})
 		oldNo++
 		newNo++
 		pos++
@@ -636,12 +676,26 @@ func renderFileWithDiff(current string, hunks []review.Hunk, focusID string, wid
 	}
 	lines := make([]string, len(rows))
 	for i, row := range rows {
-		lines[i] = renderReviewLine(row.oldNo, row.newNo, gutter, row.sign, row.text, row.style, width)
+		lines[i] = renderReviewLine(row.oldNo, row.newNo, gutter, row.kind, row.spans, row.focused, width)
 	}
 	return lines, focus
 }
 
-func renderReviewLine(oldNo, newNo, gutter int, sign, text string, style lipgloss.Style, width int) string {
+// plainSpans is the uncolored fallback when a file type has no lexer.
+func plainSpans(text string, kind reviewRowKind) []codeSpan {
+	style := toolResultStyle
+	switch kind {
+	case reviewRowDeleted:
+		style = diffDelStyle
+	case reviewRowAdded:
+		style = diffAddStyle
+	}
+	return []codeSpan{{text: text, style: style}}
+}
+
+// renderReviewLine draws one row. Added and deleted rows get a background tint
+// across the full width so syntax colors stay readable; the focused hunk is brighter.
+func renderReviewLine(oldNo, newNo, gutter int, kind reviewRowKind, spans []codeSpan, focused bool, width int) string {
 	oldGutter := strings.Repeat(" ", gutter)
 	newGutter := oldGutter
 	if oldNo > 0 {
@@ -650,49 +704,63 @@ func renderReviewLine(oldNo, newNo, gutter int, sign, text string, style lipglos
 	if newNo > 0 {
 		newGutter = fmt.Sprintf("%*d", gutter, newNo)
 	}
-	prefix := toolDimStyle.Render(oldGutter+" "+newGutter+" ") + style.Render(sign+" ")
-	textWidth := width - lipgloss.Width(prefix)
+	sign, signStyle := " ", toolResultStyle
+	var background lipgloss.TerminalColor
+	switch kind {
+	case reviewRowDeleted:
+		sign, signStyle, background = "-", diffDelStyle, diffDelBackground
+		if focused {
+			background = diffDelFocusBackground
+		}
+	case reviewRowAdded:
+		sign, signStyle, background = "+", diffAddStyle, diffAddBackground
+		if focused {
+			background = diffAddFocusBackground
+		}
+	}
+	tint := func(style lipgloss.Style) lipgloss.Style {
+		if background == nil {
+			return style
+		}
+		style = style.Background(background)
+		if focused {
+			style = style.Bold(true)
+		}
+		return style
+	}
+
+	gutterText := oldGutter + " " + newGutter + " "
+	prefix := toolDimStyle.Render(gutterText) + tint(signStyle).Render(sign+" ")
+	prefixWidth := lipgloss.Width(gutterText) + 2
+	textWidth := width - prefixWidth
 	if textWidth < 1 {
 		textWidth = 1
 	}
-	parts := wrapWidth(expandTabs(text), textWidth)
-	if len(parts) == 0 {
-		parts = []string{""}
-	}
-	pad := strings.Repeat(" ", lipgloss.Width(prefix))
+	pad := strings.Repeat(" ", prefixWidth)
 	var lines []string
-	for i, part := range parts {
+	for i, part := range wrapSpans(expandSpanTabs(spans), textWidth) {
+		var b strings.Builder
 		if i == 0 {
-			lines = append(lines, prefix+style.Render(part))
-			continue
+			b.WriteString(prefix)
+		} else {
+			b.WriteString(pad)
 		}
-		lines = append(lines, pad+style.Render(part))
+		used := 0
+		for _, span := range part {
+			b.WriteString(tint(span.style).Render(span.text))
+			used += lipgloss.Width(span.text)
+		}
+		if background != nil && used < textWidth {
+			b.WriteString(tint(lipgloss.NewStyle()).Render(strings.Repeat(" ", textWidth-used)))
+		}
+		lines = append(lines, b.String())
 	}
 	return strings.Join(lines, "\n")
 }
 
+// reviewTabWidth is the tab stop. Width measurement counts a tab as one column,
+// while the terminal draws it up to the next stop, so tabs are expanded first.
 const reviewTabWidth = 4
-
-// expandTabs replaces tabs with spaces to the next tab stop. Width measurement
-// counts a tab as one column, while the terminal draws it up to the next stop.
-func expandTabs(text string) string {
-	if !strings.Contains(text, "\t") {
-		return text
-	}
-	var b strings.Builder
-	col := 0
-	for _, r := range text {
-		if r == '\t' {
-			spaces := reviewTabWidth - col%reviewTabWidth
-			b.WriteString(strings.Repeat(" ", spaces))
-			col += spaces
-			continue
-		}
-		b.WriteRune(r)
-		col += lipgloss.Width(string(r))
-	}
-	return b.String()
-}
 
 func splitFileLines(text string) []string {
 	if text == "" {

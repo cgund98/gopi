@@ -84,6 +84,30 @@ func TestContextPercentUsesTranscript(t *testing.T) {
 	}
 }
 
+func TestSubagentLabel(t *testing.T) {
+	now := time.Now()
+	status := tools.DelegateStatus{Started: now.Add(-42 * time.Second), ToolCalls: 3, Last: "grep resume"}
+	if got := subagentLabel(status, now); got != "Subagent 42s · 3 tool calls · grep resume" {
+		t.Fatalf("label = %q", got)
+	}
+	if got := subagentLabel(tools.DelegateStatus{Started: now}, now); got != "Subagent 0s · starting" {
+		t.Fatalf("starting label = %q", got)
+	}
+}
+
+func TestContextPercentCountsResultsAfterLastUsage(t *testing.T) {
+	window := models.ContextWindow("kimi/kimi-k2.6")
+	call := gogent.NewAssistantMessageWithToolCalls("", []gogent.ToolCall{{ID: "g1", ToolName: "grep", Args: json.RawMessage(`{"pattern":"resume"}`)}})
+	call.Usage = &gogent.Usage{Input: window * 3 / 100}
+	result := gogent.Message{Role: gogent.MessageRoleTool, ToolCallID: "g1", Content: strings.Repeat("x", window*4/2)}
+	if got := contextPercent("kimi/kimi-k2.6", "", []gogent.Message{call}, ""); got != 3 {
+		t.Fatalf("before result = %d", got)
+	}
+	if got := contextPercent("kimi/kimi-k2.6", "", []gogent.Message{call, result}, ""); got != 53 {
+		t.Fatalf("after a large tool result = %d, want 53", got)
+	}
+}
+
 func TestPromptSitsAboveStatusDivider(t *testing.T) {
 	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
 	chat.width = 40

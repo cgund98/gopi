@@ -4,7 +4,8 @@ go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.5.0
-	github.com/cgund98/gogent v0.3.1
+	github.com/alecthomas/chroma/v2 v2.20.0
+	github.com/cgund98/gogent v0.3.2
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/glamour v1.0.0
@@ -13,12 +14,12 @@ require (
 	github.com/invopop/jsonschema v0.14.0
 	github.com/joho/godotenv v1.5.1
 	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/muesli/termenv v0.16.0
 	github.com/openai/openai-go v1.12.0
 	golang.org/x/net v0.52.0
 )
 
 require (
-	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
@@ -40,7 +41,6 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.1 // indirect
