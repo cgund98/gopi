@@ -51,6 +51,11 @@ type chatModel struct {
 	planPath         string
 	planBody         string
 	planVP           viewport.Model
+	plansOpen        bool
+	planRows         []string
+	planCursor       int
+	planConfirm      bool
+	planListErr      string
 	seenPlans        map[string]bool
 	sessions         *session.Store
 	sessionTitle     string
@@ -264,6 +269,9 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.reviewOpen {
 			return m.handleReviewKey(msg)
 		}
+		if m.plansOpen {
+			return m.handlePlansKey(msg)
+		}
 		if m.planOpen {
 			return m.handlePlanKey(msg)
 		}
@@ -382,6 +390,11 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openReview()
 			return m, nil
 		}
+		if text == "/plans" {
+			m.input.SetValue("")
+			m.openPlans()
+			return m, nil
+		}
 		if mode, command, ok := app.ParseModeCommand(text); command {
 			m.input.SetValue("")
 			if m.busy || m.inApprovalMode() {
@@ -498,6 +511,9 @@ func (m *chatModel) View() string {
 	}
 	if m.reviewOpen {
 		return m.renderReview()
+	}
+	if m.plansOpen {
+		return m.renderPlans()
 	}
 	if m.planOpen {
 		return m.planView()

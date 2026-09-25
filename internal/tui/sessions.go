@@ -15,6 +15,7 @@ import (
 
 const helpText = `/agent, /ask, /plan, and /mode <name> switch the session mode
 /sessions opens the saved-chat list
+/plans opens saved plans
 /review walks file edits from this chat
 /help shows this list`
 

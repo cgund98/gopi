@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const planViewHelp = "esc or q back to chat"
+const planViewHelp = "b build · esc or q back to chat"
 
 func (m *chatModel) noticeWrittenPlans() {
 	if m.seenPlans == nil {
@@ -91,6 +91,11 @@ func (m *chatModel) handlePlanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.closePlan()
 		return m, nil
+	case "b":
+		if m.busy || m.inApprovalMode() {
+			return m, nil
+		}
+		return m, m.buildPlan()
 	case "up", "down", "pgup", "pgdown", "home", "end":
 		var cmd tea.Cmd
 		m.planVP, cmd = m.planVP.Update(msg)

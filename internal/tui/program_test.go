@@ -207,7 +207,7 @@ func TestHelpAndSessionsDoNotRunAgent(t *testing.T) {
 	chat.input.SetValue("/help")
 	updated, _ := chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	chat = updated.(*chatModel)
-	if chat.busy || !strings.Contains(chat.status, "/agent") || !strings.Contains(chat.status, "/ask") || !strings.Contains(chat.status, "/plan") || !strings.Contains(chat.status, "/sessions") || !strings.Contains(chat.status, "/review") || !strings.Contains(chat.status, "/help") || !strings.Contains(chat.status, "/mode") {
+	if chat.busy || !strings.Contains(chat.status, "/agent") || !strings.Contains(chat.status, "/ask") || !strings.Contains(chat.status, "/plan") || !strings.Contains(chat.status, "/sessions") || !strings.Contains(chat.status, "/plans") || !strings.Contains(chat.status, "/review") || !strings.Contains(chat.status, "/help") || !strings.Contains(chat.status, "/mode") {
 		t.Fatalf("help status = %q busy = %v", chat.status, chat.busy)
 	}
 
