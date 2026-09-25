@@ -205,7 +205,7 @@ func searchFile(root, path, pattern string, remaining int) (matches []grepMatch,
 	return matches, false, scanner.Err()
 }
 
-// clipLine keeps about limit runes of line centred on the first match, marking cut
+// clipLine keeps about limit runes of line centered on the first match, marking cut
 // ends with an ellipsis.
 func clipLine(line, pattern string, limit int) string {
 	if utf8.RuneCountInString(line) <= limit {
