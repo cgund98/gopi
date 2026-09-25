@@ -7,10 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/cgund98/gogent"
 	"github.com/cgund98/gogent/inmemory"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestPlanViewerOpensAndCloses(t *testing.T) {

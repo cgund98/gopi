@@ -106,7 +106,7 @@ func TestSystemPromptIsAppended(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Index(got, "builtin rules") < 0 || strings.Index(got, "builtin rules") > strings.Index(got, "custom voice") {
+	if !strings.Contains(got, "builtin rules") || strings.Index(got, "builtin rules") > strings.Index(got, "custom voice") {
 		t.Fatalf("prompt = %q", got)
 	}
 }

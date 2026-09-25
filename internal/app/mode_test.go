@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cgund98/gogent"
+
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/prompt"
 	"github.com/cgund98/gopi/internal/trust"

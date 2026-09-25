@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cgund98/gogent"
+	"github.com/cgund98/gogent/inmemory"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/cgund98/gogent"
-	"github.com/cgund98/gogent/inmemory"
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/session"
@@ -126,13 +126,13 @@ func TestEscCancelsBusyAgent(t *testing.T) {
 	chat.width = 40
 	chat.height = 12
 	chat.busy = true
-	cancelled := false
-	chat.runCancel = func() { cancelled = true }
+	canceled := false
+	chat.runCancel = func() { canceled = true }
 
 	updated, cmd := chat.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	chat = updated.(*chatModel)
-	if cmd != nil || !cancelled || chat.status != "Cancelling…" {
-		t.Fatalf("cancel = %v status = %q cmd = %v", cancelled, chat.status, cmd)
+	if cmd != nil || !canceled || chat.status != "Canceling…" {
+		t.Fatalf("cancel = %v status = %q cmd = %v", canceled, chat.status, cmd)
 	}
 
 	updated, cmd = chat.Update(agentFinishedMsg{Err: context.Canceled})

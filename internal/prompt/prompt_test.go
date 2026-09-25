@@ -1,7 +1,9 @@
 package prompt
 
-import "strings"
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuiltinFollowsPiShape(t *testing.T) {
 	body := Builtin()

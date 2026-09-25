@@ -282,7 +282,20 @@ func TestSeatbeltFailureDoesNotRetryUnsandboxed(t *testing.T) {
 		return sandbox.Result{}, fmt.Errorf("sandbox-exec failed")
 	}
 	defer func() { launchCommand = orig }()
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`))
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`))
+	if runtime.GOOS != "darwin" {
+		if err != nil || len(names) != 0 {
+			t.Fatalf("err = %v launches = %#v", err, names)
+		}
+		var payload map[string]string
+		if jsonErr := json.Unmarshal(raw, &payload); jsonErr != nil {
+			t.Fatal(jsonErr)
+		}
+		if payload["error"] != "access_denied" {
+			t.Fatalf("payload = %#v", payload)
+		}
+		return
+	}
 	if err == nil || !strings.Contains(err.Error(), "sandbox-exec failed") {
 		t.Fatalf("err = %v", err)
 	}

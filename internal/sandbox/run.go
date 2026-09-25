@@ -76,7 +76,7 @@ func runChild(ctx context.Context, profile Profile, argv []string) (Result, erro
 		return result, fmt.Errorf("command timed out")
 	}
 	if ctx.Err() != nil {
-		return result, fmt.Errorf("command cancelled")
+		return result, fmt.Errorf("command canceled")
 	}
 	return result, nil
 }

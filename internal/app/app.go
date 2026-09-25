@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	openaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-
 	"github.com/cgund98/gogent"
 	"github.com/cgund98/gogent/inmemory"
 	"github.com/cgund98/gogent/openai"
+	openaisdk "github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/prompt"

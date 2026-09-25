@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cgund98/gogent"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 
-	"github.com/cgund98/gogent"
 	"github.com/cgund98/gopi/internal/app"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	sess "github.com/cgund98/gopi/internal/session"

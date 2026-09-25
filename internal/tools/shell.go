@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cgund98/gogent"
+
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/sandbox"
 	"github.com/cgund98/gopi/internal/workspace"

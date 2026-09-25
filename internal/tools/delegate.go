@@ -9,9 +9,10 @@ import (
 
 	"github.com/cgund98/gogent"
 	"github.com/cgund98/gogent/inmemory"
+	"github.com/google/uuid"
+
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/workspace"
-	"github.com/google/uuid"
 )
 
 const (
