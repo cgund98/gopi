@@ -12,13 +12,19 @@ import (
 	"github.com/cgund98/gopi/internal/app"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	sess "github.com/cgund98/gopi/internal/session"
+	"github.com/cgund98/gopi/internal/tools"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
 // Run starts the terminal UI. An unknown workspace asks for trust before the chat.
-func Run(ctx context.Context, session *app.Session, decisions *trust.Store) error {
+func Run(ctx context.Context, session *app.Session, decisions *trust.Store, resume *sess.File) error {
 	model := newProgram(ctx, session, decisions)
+	if resume != nil {
+		if err := model.resume(*resume); err != nil {
+			return err
+		}
+	}
 	program := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := program.Run()
 	return err
@@ -128,6 +134,34 @@ func (m *programModel) bindChat(session *app.Session) {
 		m.chat.systemPrompt = session.Model.SystemPrompt()
 	}
 	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets)
+	m.bindEditReview()
+}
+
+func (m *programModel) bindEditReview() {
+	edit := m.session.Edit
+	if edit == nil {
+		return
+	}
+	edit.OnWrite = func(note tools.EditNote) {
+		if m.chat.sessions == nil || m.chat.chatID == "" {
+			return
+		}
+		_ = m.chat.sessions.NoteEdit(m.chat.chatID, note.Path, note.First, note.Created, note.Before)
+		m.chat.stampReviewHunks(note.Path)
+	}
+	m.chat.forgetEdit = edit.Forget
+}
+
+func (m *programModel) adoptReview(file sess.File) {
+	m.chat.review = file.Review
+	if m.session.Edit == nil {
+		return
+	}
+	paths := make([]string, len(file.Review))
+	for i, entry := range file.Review {
+		paths[i] = entry.Path
+	}
+	m.session.Edit.Seed(paths)
 }
 
 func awaitSession(events <-chan tea.Msg) tea.Cmd {
@@ -222,6 +256,10 @@ func (m *programModel) applyLoaded(msg sessionLoadedMsg) {
 	if msg.Fresh && msg.Same {
 		m.chat.chatID = uuid.New().String()
 		m.chat.sessionTitle = ""
+		m.chat.review = nil
+		if m.session.Edit != nil {
+			m.session.Edit.Reset()
+		}
 		m.chat.messages = nil
 		m.chat.toolCards = nil
 		m.chat.pendingApprovals = nil
@@ -249,9 +287,14 @@ func (m *programModel) applyLoaded(msg sessionLoadedMsg) {
 	if msg.Fresh {
 		m.chat.chatID = uuid.New().String()
 		m.chat.sessionTitle = ""
+		m.chat.review = nil
+		if m.session.Edit != nil {
+			m.session.Edit.Reset()
+		}
 	} else {
 		m.chat.chatID = msg.File.ID
 		m.chat.sessionTitle = msg.File.Title
+		m.adoptReview(msg.File)
 	}
 	m.chat.err = nil
 	m.chat.status = ""
@@ -283,6 +326,7 @@ func (m *programModel) resume(file sess.File) error {
 	m.bindChat(next)
 	m.chat.chatID = file.ID
 	m.chat.sessionTitle = file.Title
+	m.adoptReview(file)
 	m.chat.err = nil
 	m.chat.status = ""
 	m.chat.afterStoreRefresh()
@@ -309,6 +353,7 @@ func (m *programModel) resumeHere(file sess.File) error {
 	m.bindChat(m.session)
 	m.chat.chatID = file.ID
 	m.chat.sessionTitle = file.Title
+	m.adoptReview(file)
 	m.chat.err = nil
 	m.chat.status = ""
 	m.chat.afterStoreRefresh()

@@ -15,11 +15,13 @@ import (
 
 const helpText = `/agent, /ask, /plan, and /mode <name> switch the session mode
 /sessions opens the saved-chat list
+/review walks file edits from this chat
 /help shows this list`
 
 type sessionSavedMsg struct {
-	Title string
-	Err   error
+	Title  string
+	Review []session.ReviewEntry
+	Err    error
 }
 
 type sessionProgressMsg struct {
@@ -52,8 +54,10 @@ func (m *chatModel) persistSession() tea.Cmd {
 			return nil
 		}
 		title := ""
+		var review []session.ReviewEntry
 		if existing, err := sessions.Load(id); err == nil {
 			title = existing.Title
+			review = existing.Review
 		}
 		if title == "" {
 			title = generateTitle(ctx, titleFn, messages)
@@ -65,8 +69,9 @@ func (m *chatModel) persistSession() tea.Cmd {
 			Mode:      mode,
 			Updated:   time.Now().UTC(),
 			Messages:  messages,
+			Review:    review,
 		})
-		return sessionSavedMsg{Title: title, Err: err}
+		return sessionSavedMsg{Title: title, Review: review, Err: err}
 	}
 }
 

@@ -66,6 +66,14 @@ type chatModel struct {
 	sessionCursor    int
 	sessionErr       string
 	sessionConfirm   bool
+	review           []session.ReviewEntry
+	reviewOpen       bool
+	reviewCursor     int
+	reviewHunk       int
+	reviewPane       int
+	reviewScroll     int
+	reviewErr        string
+	forgetEdit       func(string)
 	secretNames      []string
 	secretSelected   map[string]map[string]bool
 
@@ -237,6 +245,7 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Title != "" {
 			m.sessionTitle = msg.Title
 		}
+		m.review = msg.Review
 		if msg.Err != nil {
 			m.status = msg.Err.Error()
 		}
@@ -251,6 +260,9 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.sessionsOpen {
 			return m.handleSessionKey(msg)
+		}
+		if m.reviewOpen {
+			return m.handleReviewKey(msg)
 		}
 		if m.planOpen {
 			return m.handlePlanKey(msg)
@@ -365,6 +377,11 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			return m, m.openSessions()
 		}
+		if text == "/review" {
+			m.input.SetValue("")
+			m.openReview()
+			return m, nil
+		}
 		if mode, command, ok := app.ParseModeCommand(text); command {
 			m.input.SetValue("")
 			if m.busy || m.inApprovalMode() {
@@ -433,6 +450,9 @@ func (m *chatModel) footerLines() int {
 	} else {
 		footer++
 	}
+	if m.pendingReviewCount() > 0 {
+		footer += 2
+	}
 	return footer
 }
 
@@ -476,6 +496,9 @@ func (m *chatModel) View() string {
 	if m.sessionsOpen {
 		return m.renderSessions()
 	}
+	if m.reviewOpen {
+		return m.renderReview()
+	}
 	if m.planOpen {
 		return m.planView()
 	}
@@ -505,6 +528,14 @@ func (m *chatModel) View() string {
 		b.WriteString(m.input.View())
 	}
 
+	if count := m.pendingReviewCount(); count > 0 {
+		b.WriteByte('\n')
+		label := "Review pending · 1 file"
+		if count != 1 {
+			label = fmt.Sprintf("Review pending · %d files", count)
+		}
+		b.WriteString(statusStyle.Render(label))
+	}
 	if m.status != "" || m.err != nil {
 		b.WriteByte('\n')
 		if m.err != nil {

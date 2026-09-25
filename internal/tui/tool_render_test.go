@@ -21,7 +21,7 @@ func TestEditHeadlineAndDiff(t *testing.T) {
 		t.Fatalf("headline = %q", got)
 	}
 	body := renderToolBody(card, 80)
-	if !strings.Contains(body, "demo.txt") || !strings.Contains(body, "alpha") || !strings.Contains(body, "beta") {
+	if !strings.Contains(body, "demo.txt") || !strings.Contains(body, "alpha") || !strings.Contains(body, "beta") || !strings.Contains(body, "+1") || !strings.Contains(body, "−1") {
 		t.Fatalf("diff = %q", body)
 	}
 	if !strings.Contains(body, "╭") || !strings.Contains(body, "1") {

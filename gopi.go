@@ -11,6 +11,7 @@ import (
 
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
+	"github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/tui"
 	"github.com/cgund98/gopi/internal/workspace"
@@ -30,6 +31,7 @@ type Option func(*options)
 
 type options struct {
 	workspace string
+	resume    bool
 	tools     map[Mode][]gogent.Tool
 }
 
@@ -37,6 +39,14 @@ type options struct {
 func WithWorkspace(dir string) Option {
 	return func(o *options) {
 		o.workspace = dir
+	}
+}
+
+// WithResume opens the newest saved chat instead of an empty one.
+// WithWorkspace limits that choice to chats for that directory.
+func WithResume() Option {
+	return func(o *options) {
+		o.resume = true
 	}
 }
 
@@ -68,11 +78,20 @@ func Run(ctx context.Context, opts ...Option) error {
 	}
 
 	dir := options.workspace
-	if dir == "" {
+	if dir == "" && !options.resume {
 		dir, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("current directory: %w", err)
 		}
+	}
+	var resume *session.File
+	if options.resume {
+		picked, err := latestSession(home, dir)
+		if err != nil {
+			return err
+		}
+		resume = &picked
+		dir = picked.Workspace
 	}
 	root, err := workspace.Open(dir)
 	if err != nil {
@@ -88,5 +107,41 @@ func Run(ctx context.Context, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-	return tui.Run(ctx, session, decisions)
+	return tui.Run(ctx, session, decisions, resume)
+}
+
+func latestSession(home, workspace string) (session.File, error) {
+	store, err := session.Open(home)
+	if err != nil {
+		return session.File{}, err
+	}
+	files, err := store.List()
+	if err != nil {
+		return session.File{}, err
+	}
+	root := ""
+	if workspace != "" {
+		opened, err := workspaceOpen(workspace)
+		if err != nil {
+			return session.File{}, err
+		}
+		root = opened
+	}
+	for _, file := range files {
+		if root == "" || file.Workspace == root {
+			return file, nil
+		}
+	}
+	if root != "" {
+		return session.File{}, fmt.Errorf("no saved session for %s", root)
+	}
+	return session.File{}, fmt.Errorf("no saved session")
+}
+
+func workspaceOpen(path string) (string, error) {
+	root, err := workspace.Open(path)
+	if err != nil {
+		return "", err
+	}
+	return root.Path, nil
 }

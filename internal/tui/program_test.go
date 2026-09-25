@@ -207,7 +207,7 @@ func TestHelpAndSessionsDoNotRunAgent(t *testing.T) {
 	chat.input.SetValue("/help")
 	updated, _ := chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	chat = updated.(*chatModel)
-	if chat.busy || !strings.Contains(chat.status, "/agent") || !strings.Contains(chat.status, "/ask") || !strings.Contains(chat.status, "/plan") || !strings.Contains(chat.status, "/sessions") || !strings.Contains(chat.status, "/help") || !strings.Contains(chat.status, "/mode") {
+	if chat.busy || !strings.Contains(chat.status, "/agent") || !strings.Contains(chat.status, "/ask") || !strings.Contains(chat.status, "/plan") || !strings.Contains(chat.status, "/sessions") || !strings.Contains(chat.status, "/review") || !strings.Contains(chat.status, "/help") || !strings.Contains(chat.status, "/mode") {
 		t.Fatalf("help status = %q busy = %v", chat.status, chat.busy)
 	}
 
@@ -483,5 +483,78 @@ func TestSecretToggleWritesSelectedName(t *testing.T) {
 	args := string(loaded.ToolCalls[0].Args)
 	if strings.Contains(args, "openai_api_key") || !strings.Contains(args, "DEPLOY_TOKEN") {
 		t.Fatalf("args = %s", args)
+	}
+}
+
+func TestReviewTreePutsDirectoryAboveItsFile(t *testing.T) {
+	chat := &chatModel{}
+	got := stripANSI(chat.renderReviewTree([]session.ReviewEntry{
+		{Path: "main.go"},
+		{Path: "internal/tui/review.go"},
+		{Path: "internal/diff.go"},
+		{Path: "cmd/main.go"},
+		{Path: "after.go"},
+	}, 40, 20))
+	want := "Files\nafter.go\nmain.go\n\ncmd/\n  main.go\n\ninternal/\n  diff.go\n\n  tui/\n    review.go"
+	if got != want {
+		t.Fatalf("tree = %q", got)
+	}
+}
+
+func TestReviewRejectsHunkAndClearsBanner(t *testing.T) {
+	work := t.TempDir()
+	if err := os.WriteFile(filepath.Join(work, "main.go"), []byte("package beta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.NoteEdit("chat", "main.go", true, false, []byte("package alpha\n")); err != nil {
+		t.Fatal(err)
+	}
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.chatID = "chat"
+	chat.sessions = store
+	chat.workspacePath = work
+	chat.width = 80
+	chat.height = 24
+	chat.reloadReview()
+	if !strings.Contains(stripANSI(chat.View()), "Review pending · 1 file") {
+		t.Fatalf("banner = %q", stripANSI(chat.View()))
+	}
+	chat.input.SetValue("/review")
+	updated, _ := chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	chat = updated.(*chatModel)
+	if chat.busy || !strings.Contains(stripANSI(chat.View()), "main.go") {
+		t.Fatalf("review view = %q busy = %v", stripANSI(chat.View()), chat.busy)
+	}
+	updated, _ = chat.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	chat = updated.(*chatModel)
+	body, err := os.ReadFile(filepath.Join(work, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "package alpha\n" {
+		t.Fatalf("file = %q", body)
+	}
+	updated, _ = chat.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	chat = updated.(*chatModel)
+	if strings.Contains(stripANSI(chat.View()), "Review pending") {
+		t.Fatalf("banner stayed = %q", stripANSI(chat.View()))
+	}
+	loaded, err := store.Load("chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Review) != 0 {
+		t.Fatalf("review = %+v", loaded.Review)
+	}
+	if err := os.WriteFile(filepath.Join(work, "main.go"), []byte("package manual\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chat.reloadReview()
+	if chat.pendingReviewCount() != 0 {
+		t.Fatalf("manual edit pending = %d", chat.pendingReviewCount())
 	}
 }

@@ -373,8 +373,20 @@ func renderEditDiff(path, old, newText string, width int) string {
 		gutterWidth = 2
 	}
 
+	added, deleted := lineCount(newText), lineCount(old)
+	header := path
+	counts := fmt.Sprintf("+%d −%d", added, deleted)
+	gap := textWidth - lipgloss.Width(header) - lipgloss.Width(counts)
+	if gap < 1 {
+		header = truncateWidth(header, textWidth-lipgloss.Width(counts)-1)
+		gap = textWidth - lipgloss.Width(header) - lipgloss.Width(counts)
+	}
+	if gap < 1 {
+		gap = 1
+	}
+	title := toolSuccessStyle.Bold(true).Render(header) + strings.Repeat(" ", gap) + diffAddStyle.Render(fmt.Sprintf("+%d", added)) + " " + diffDelStyle.Render(fmt.Sprintf("−%d", deleted))
 	var body []string
-	body = append(body, toolSuccessStyle.Bold(true).Render(truncateWidth(path, textWidth)))
+	body = append(body, title)
 	body = append(body, dividerStyle.Render(strings.Repeat("─", textWidth)))
 	if len(rows) == 0 {
 		body = append(body, toolDimStyle.Render("(empty)"))
@@ -389,6 +401,13 @@ type diffRow struct {
 	sign  string
 	text  string
 	style lipgloss.Style
+}
+
+func lineCount(text string) int {
+	if text == "" {
+		return 0
+	}
+	return len(strings.Split(strings.TrimRight(text, "\n"), "\n"))
 }
 
 func diffRows(text, sign string, style lipgloss.Style) []diffRow {

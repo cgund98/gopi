@@ -7,7 +7,7 @@ export OPENAI_API_KEY=...
 go run ./cmd/gopi
 ```
 
-Optional: `-workspace <dir>`. The default workspace is the current directory. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
+Optional: `-workspace <dir>`. The default workspace is the current directory. `-resume` opens the newest saved session instead of an empty chat. With `-workspace`, it opens the newest session for that directory. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 Pushing to GitHub runs lint, tests, and a format check. Pushes to `main` open a release pull request through release-please. Merging that pull request tags the module and publishes it to the Go module proxy. Actions must be allowed to create and approve pull requests.
 
