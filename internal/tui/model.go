@@ -65,6 +65,8 @@ type chatModel struct {
 	sessionCursor    int
 	sessionErr       string
 	sessionConfirm   bool
+	secretNames      []string
+	secretSelected   map[string]map[string]bool
 
 	width  int
 	height int

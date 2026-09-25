@@ -38,3 +38,14 @@ func TestLoadRefusesLooseSecretsFile(t *testing.T) {
 		t.Fatal("expected loose secrets file to be refused")
 	}
 }
+
+func TestOfferNamesHidesHostKeys(t *testing.T) {
+	names := OfferNames(map[string]string{
+		"openai_api_key": "sk",
+		"search_api_key": "brave",
+		"DEPLOY_TOKEN":   "token",
+	})
+	if len(names) != 1 || names[0] != "DEPLOY_TOKEN" {
+		t.Fatalf("names = %#v", names)
+	}
+}

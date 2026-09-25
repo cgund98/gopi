@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -287,7 +288,7 @@ func TestResumeSwapsWorkspace(t *testing.T) {
 	if err := decisions.Set(current.Path, true); err != nil || decisions.Set(other.Path, true) != nil {
 		t.Fatal(err)
 	}
-	started, err := app.New(cfg, current, trust.WorkspaceTrusted)
+	started, err := app.New(cfg, current, trust.WorkspaceTrusted, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +384,7 @@ func TestResumeSameWorkspaceKeepsAgent(t *testing.T) {
 	if err := decisions.Set(current.Path, true); err != nil {
 		t.Fatal(err)
 	}
-	started, err := app.New(cfg, current, trust.WorkspaceTrusted)
+	started, err := app.New(cfg, current, trust.WorkspaceTrusted, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,5 +448,40 @@ func TestPersistWritesAfterFinishedRun(t *testing.T) {
 	saved = msg.(sessionSavedMsg)
 	if saved.Title != "Generated title" {
 		t.Fatalf("title replaced: %q", saved.Title)
+	}
+}
+
+func TestSecretToggleWritesSelectedName(t *testing.T) {
+	store := inmemory.NewMessageStore()
+	chat := newChatModel(context.Background(), nil, store, gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.secretNames = []string{"DEPLOY_TOKEN"}
+	message := gogent.NewAssistantMessageWithToolCalls("", []gogent.ToolCall{
+		gogent.NewPendingToolCall("call-1", "shell", json.RawMessage(`{"command":"echo hi","secret_names":["openai_api_key"]}`)),
+	})
+	if err := store.AddMessages(context.Background(), chat.chatID, message); err != nil {
+		t.Fatal(err)
+	}
+	chat.pendingApprovals = []gogent.PendingToolCall{{
+		MessageID:  message.ID,
+		ToolCallID: "call-1",
+		ToolName:   "shell",
+	}}
+	chat.syncApprovalFocus()
+	view := stripANSI(chat.approvalList.View())
+	if strings.Contains(view, "openai_api_key") || !strings.Contains(view, "DEPLOY_TOKEN") {
+		t.Fatalf("approval list = %q", view)
+	}
+	chat.approvalList.Select(0)
+	chat.toggleSelectedSecret()
+	if err := chat.writeSecretNames(context.Background(), message.ID, "call-1", chat.selectedSecretNames("call-1")); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetMessage(context.Background(), chat.chatID, message.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(loaded.ToolCalls[0].Args)
+	if strings.Contains(args, "openai_api_key") || !strings.Contains(args, "DEPLOY_TOKEN") {
+		t.Fatalf("args = %s", args)
 	}
 }

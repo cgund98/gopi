@@ -6,7 +6,8 @@ Gopi is a personal coding agent: a terminal UI over the gogent library. Start wi
 
 | Path | Role |
 |------|------|
-| `cmd/gopi` | Process entrypoint |
+| `gopi.go` | Public `Run`, `WithWorkspace`, and `WithTool` |
+| `cmd/gopi` | Built binary. Calls `gopi.Run` with the built-in tools |
 | `internal/app` | Wires config, tools, and one gogent agent |
 | `internal/config` | `~/.gopi/config.toml`, `system.md`, and `OPENAI_API_KEY` |
 | `internal/prompt` | Built-in system prompt |

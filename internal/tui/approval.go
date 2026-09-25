@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/cgund98/gogent"
@@ -14,15 +15,26 @@ const (
 	choiceReject  = "Reject"
 )
 
-const approvalHelpText = "↑/↓ select · enter confirm · y approve · n reject"
+const approvalHelpText = "↑/↓ select · space toggle secret · enter confirm · y approve · n reject"
 
 type approvalChoiceItem struct {
-	label string
+	label  string
+	secret bool
+	on     bool
 }
 
 func (i approvalChoiceItem) FilterValue() string { return i.label }
 
-func (i approvalChoiceItem) Title() string { return i.label }
+func (i approvalChoiceItem) Title() string {
+	if !i.secret {
+		return i.label
+	}
+	mark := " "
+	if i.on {
+		mark = "x"
+	}
+	return "[" + mark + "] " + i.label
+}
 
 func (i approvalChoiceItem) Description() string { return "" }
 
@@ -71,18 +83,36 @@ func (m *chatModel) syncApprovalFocus() {
 	if len(m.pendingApprovals) == 1 {
 		m.activeToolCallID = m.pendingApprovals[0].ToolCallID
 		m.selectedTool = toolCardIndexByPending(m.toolCards, m.pendingApprovals[0])
+		m.refreshApprovalChoices()
 		return
 	}
 
 	for _, pending := range m.pendingApprovals {
 		if pending.ToolCallID == m.activeToolCallID {
 			m.selectedTool = toolCardIndexByPending(m.toolCards, pending)
+			m.refreshApprovalChoices()
 			return
 		}
 	}
 
 	m.activeToolCallID = m.pendingApprovals[0].ToolCallID
 	m.selectedTool = toolCardIndexByPending(m.toolCards, m.pendingApprovals[0])
+	m.refreshApprovalChoices()
+}
+
+func (m *chatModel) refreshApprovalChoices() {
+	var items []list.Item
+	if pending, ok := m.currentPendingApproval(); ok && pending.ToolName == "shell" {
+		selected := m.secretSelected[pending.ToolCallID]
+		for _, name := range m.secretNames {
+			items = append(items, approvalChoiceItem{label: name, secret: true, on: selected[name]})
+		}
+	}
+	items = append(items,
+		approvalChoiceItem{label: choiceApprove},
+		approvalChoiceItem{label: choiceReject},
+	)
+	m.approvalList.SetItems(items)
 }
 
 func (m *chatModel) currentPendingApproval() (gogent.PendingToolCall, bool) {
@@ -130,9 +160,16 @@ func renderApprovalPrompt(pending gogent.PendingToolCall, width int) string {
 
 func (m *chatModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case " ":
+		m.toggleSelectedSecret()
+		return m, nil
 	case "enter":
 		item, ok := m.approvalList.SelectedItem().(approvalChoiceItem)
 		if !ok {
+			return m, nil
+		}
+		if item.secret {
+			m.toggleSelectedSecret()
 			return m, nil
 		}
 		return m, m.submitApprovalChoice(item.label)
@@ -162,7 +199,11 @@ func (m *chatModel) submitApprovalChoice(choice string) tea.Cmd {
 	switch choice {
 	case choiceApprove:
 		m.status = "Running tool…"
+		names := m.selectedSecretNames(toolCallID)
 		return m.startRun(func(ctx context.Context) error {
+			if err := m.writeSecretNames(ctx, messageID, toolCallID, names); err != nil {
+				return err
+			}
 			return m.agent.ApproveToolCall(ctx, m.chatID, messageID, toolCallID)
 		})
 	case choiceReject:
@@ -174,4 +215,71 @@ func (m *chatModel) submitApprovalChoice(choice string) tea.Cmd {
 		m.busy = false
 		return nil
 	}
+}
+
+func (m *chatModel) toggleSelectedSecret() {
+	item, ok := m.approvalList.SelectedItem().(approvalChoiceItem)
+	if !ok || !item.secret {
+		return
+	}
+	pending, ok := m.currentPendingApproval()
+	if !ok {
+		return
+	}
+	if m.secretSelected == nil {
+		m.secretSelected = map[string]map[string]bool{}
+	}
+	if m.secretSelected[pending.ToolCallID] == nil {
+		m.secretSelected[pending.ToolCallID] = map[string]bool{}
+	}
+	m.secretSelected[pending.ToolCallID][item.label] = !m.secretSelected[pending.ToolCallID][item.label]
+	index := m.approvalList.Index()
+	m.refreshApprovalChoices()
+	m.approvalList.Select(index)
+}
+
+func (m *chatModel) selectedSecretNames(toolCallID string) []string {
+	selected := m.secretSelected[toolCallID]
+	var names []string
+	for _, name := range m.secretNames {
+		if selected[name] {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func (m *chatModel) writeSecretNames(ctx context.Context, messageID, toolCallID string, names []string) error {
+	message, err := m.store.GetMessage(ctx, m.chatID, messageID)
+	if err != nil {
+		return err
+	}
+	updated := false
+	for i := range message.ToolCalls {
+		call := &message.ToolCalls[i]
+		if call.ID != toolCallID || call.ToolName != "shell" {
+			continue
+		}
+		args := map[string]any{}
+		if len(call.Args) > 0 {
+			if err := json.Unmarshal(call.Args, &args); err != nil {
+				return err
+			}
+		}
+		if len(names) == 0 {
+			delete(args, "secret_names")
+		} else {
+			args["secret_names"] = names
+		}
+		raw, err := json.Marshal(args)
+		if err != nil {
+			return err
+		}
+		call.Args = raw
+		updated = true
+	}
+	if !updated {
+		return nil
+	}
+	return m.store.UpdateMessage(ctx, m.chatID, message.ID, message)
 }

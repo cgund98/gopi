@@ -21,7 +21,7 @@ Tool policy without a sandbox is not a security boundary. Cursor's own ignore ru
 - **Deny wins.** A project config, skill, or `AGENTS.md` can narrow permissions. It cannot widen the user's security floor (protected paths, secret scrubbing, metadata-address blocks, approval for elevation).
 - **Approval is per call.** Protected files and privilege elevation are approved once, for that tool call, and then forgotten. Session allowlists are a later convenience for ordinary sandboxed commands, and they never cover protected paths.
 - **The model is untrusted.** File contents, web pages, tool output, skills, and `AGENTS.md` inside a repository are data. They do not grant capabilities.
-- **Secrets stay in the host.** The agent names a purpose ("push with git"). The host injects the credential into a child environment or a local broker. The value is not a tool argument, a prompt field, or a log line.
+- **Secrets stay in the host.** The user toggles env names on an elevation card. The host injects those values into the child environment. The value is not a tool argument, a prompt field, or a log line.
 - **macOS first.** The workstation is macOS. Linux uses the same policy types with a different enforcer. Windows is out of scope.
 
 ## System overview
@@ -83,7 +83,8 @@ sequenceDiagram
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/gopi` | Process entrypoint, flag parsing, signal handling |
+| `gopi` | Public library: `Run`, `WithWorkspace`, and `WithTool` |
+| `cmd/gopi` | Built binary. Calls `gopi.Run` with the built-in tools |
 | `internal/app` | Session wiring: config, prompt, registry, agent, store |
 | `internal/tui` | Bubble Tea UI. Approval cards follow `gogent/examples/tui` |
 | `internal/config` | `~/.gopi` and project `.gopi` loading, precedence, security floor |
@@ -301,8 +302,7 @@ Elevated commands keep the scrubbed environment. Passing a secret is a second, s
 The broker loads secrets into the host process at startup. Consumers:
 
 - The model client reads the provider API key from the broker inside the host. The key is not copied into tool environments, transcripts, or the system prompt.
-- A command that needs git or `gh` credentials receives them only when an elevation card names those keys. Default sandboxed `git status` and `git diff` get no token. `git push` is an elevated or brokered operation.
-- Optional local helpers (a tiny `GIT_ASKPASS` or `gh` credential helper bound to a loopback socket) let an approved command authenticate without the token appearing in argv. The socket is created for that command and closed when it exits. The sandbox does not get the user's long-lived `SSH_AUTH_SOCK` unless the elevation card says so.
+- A shell call receives a secret only when the elevation card toggles that env name. The value is copied into the child environment after approval.
 
 Redaction runs on every tool result and every log line before persistence. It replaces:
 
@@ -476,7 +476,7 @@ These are part of the core, not polish.
 - **Dependency pinning** of the Linux helper: never execute a `bwrap` discovered inside the workspace.
 - **Context budgets** for `AGENTS.md` and skill catalogs, with truncation marked in the prompt.
 - **Structured tool errors** that match gogent's existing error style (`access_denied` alongside `execution_failed`) so the model can recover without dumping policy internals.
-- **No secret in argv.** Credentials move through the broker, an env injection the card named, or a short-lived askpass socket.
+- **No secret in argv.** Credentials move through an env injection the card named.
 
 ## Interaction modes
 
@@ -493,8 +493,6 @@ Plan does not auto-apply when the user accepts it. Applying the plan is an Agent
 ## Remaining work
 
 1. **Linux sandbox.** A Bubblewrap launcher for the same `Profile` type, with the same escape tests as Seatbelt. Never execute a `bwrap` discovered inside the workspace.
-2. **Unsandboxed shell and secret injection.** `profile: unsandboxed` is refused. An elevation card does not yet inject named secrets into the command environment, and `git` or `gh` credentials are not brokered through a short-lived helper.
-3. **Session persistence.** The transcript is in memory for one process. A store under `~/.gopi/sessions/` is not built.
 
 ## Gogent constraints to preserve
 

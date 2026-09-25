@@ -11,12 +11,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cgund98/gopi/internal/sandbox"
 )
 
 func TestShellRejectsWiderProfileAndOutsideCwd(t *testing.T) {
 	root := openTemp(t)
 	tool := &Shell{Root: root, HomeDir: t.TempDir()}
-	denied, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi","profile":"unsandboxed"}`))
+	denied, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi","profile":"workspace_network"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,4 +228,110 @@ func containsOutput(raw json.RawMessage, needle string) bool {
 		return false
 	}
 	return strings.Contains(payload.Stdout, needle) || strings.Contains(payload.Stderr, needle)
+}
+
+func TestUnsandboxedRequiresApprovalAndSkipsSeatbelt(t *testing.T) {
+	root := openTemp(t)
+	home := t.TempDir()
+	tool := &Shell{Root: root, HomeDir: home}
+	decision, err := tool.RequiresApproval(context.Background(), json.RawMessage(`{"command":"echo hi","profile":"unsandboxed"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required || !strings.Contains(decision.Reason, "Profile: sandbox -> unsandboxed") {
+		t.Fatalf("decision = %#v", decision)
+	}
+	if strings.Contains(string(tool.Parameters()), "secret_names") {
+		t.Fatal("secret_names is visible to the model")
+	}
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+	t.Setenv("GOPI_PARENT_MARKER", "parent-secret")
+	var saw sandbox.Profile
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		saw = profile
+		return sandbox.Result{Stdout: "ok\n"}, nil
+	}
+	defer func() { launchCommand = orig }()
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi","profile":"unsandboxed"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saw.Name != sandbox.ProfileUnsandboxed {
+		t.Fatalf("profile = %#v", saw)
+	}
+	if len(saw.Argv) == 0 || saw.Argv[0] == "/usr/bin/sandbox-exec" {
+		t.Fatalf("argv = %#v", saw.Argv)
+	}
+	joined := strings.Join(saw.Env, "\n")
+	if strings.Contains(joined, "SSH_AUTH_SOCK") || strings.Contains(joined, "parent-secret") {
+		t.Fatalf("env = %s", joined)
+	}
+	if !containsOutput(raw, "ok") {
+		t.Fatalf("result = %s", raw)
+	}
+}
+
+func TestSeatbeltFailureDoesNotRetryUnsandboxed(t *testing.T) {
+	root := openTemp(t)
+	tool := &Shell{Root: root, HomeDir: t.TempDir()}
+	var names []string
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		names = append(names, profile.Name)
+		return sandbox.Result{}, fmt.Errorf("sandbox-exec failed")
+	}
+	defer func() { launchCommand = orig }()
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`))
+	if err == nil || !strings.Contains(err.Error(), "sandbox-exec failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(names) != 1 || names[0] != sandbox.ProfileSandbox {
+		t.Fatalf("launches = %#v", names)
+	}
+}
+
+func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
+	root := openTemp(t)
+	home := t.TempDir()
+	const secret = "token-value-xyz"
+	tool := &Shell{Root: root, HomeDir: home, Secrets: map[string]string{"DEPLOY_TOKEN": secret, "openai_api_key": "sk-host"}}
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		value := ""
+		for _, entry := range profile.Env {
+			if strings.HasPrefix(entry, "DEPLOY_TOKEN=") {
+				value = strings.TrimPrefix(entry, "DEPLOY_TOKEN=")
+			}
+			if strings.Contains(entry, "sk-host") {
+				t.Errorf("host key injected: %s", entry)
+			}
+		}
+		return sandbox.Result{Stdout: value}, nil
+	}
+	defer func() { launchCommand = orig }()
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN","openai_api_key"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := WrapRedacting(tool, func(text string) string {
+		return strings.ReplaceAll(text, secret, "[redacted]")
+	})
+	redacted, err := wrapped.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(redacted), secret) {
+		t.Fatalf("result leaked secret: %s", redacted)
+	}
+	if !strings.Contains(string(raw), secret) {
+		t.Fatal("child environment did not receive the secret")
+	}
+	audit, err := os.ReadFile(filepath.Join(home, "audit.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(audit), secret) || !strings.Contains(string(audit), "secrets=DEPLOY_TOKEN") {
+		t.Fatalf("audit = %s", audit)
+	}
 }

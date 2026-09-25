@@ -19,7 +19,8 @@ import (
 type shellArgs struct {
 	Command      string   `json:"command" jsonschema:"description=Shell command to run inside the sandbox"`
 	Cwd          string   `json:"cwd,omitempty" jsonschema:"description=Working directory relative to the workspace"`
-	Profile      string   `json:"profile,omitempty" jsonschema:"description=sandbox, or extra_paths when read_paths or write_paths is set"`
+	Profile      string   `json:"profile,omitempty" jsonschema:"description=sandbox, extra_paths when read_paths or write_paths is set, or unsandboxed to run without Seatbelt after the user approves"`
+	SecretNames  []string `json:"secret_names,omitempty" jsonschema:"-"`
 	ReadPaths    []string `json:"read_paths,omitempty" jsonschema:"description=Extra files or directories to read. The user must approve the call."`
 	WritePaths   []string `json:"write_paths,omitempty" jsonschema:"description=Extra files or directories to write. The user must approve the call."`
 	NetworkHosts []string `json:"network_hosts,omitempty" jsonschema:"description=Extra hosts this command may reach through the proxy. The user must approve the call."`
@@ -33,12 +34,13 @@ type Shell struct {
 	Network    string
 	AllowHosts []string
 	DenyHosts  []string
+	Secrets    map[string]string
 }
 
 func (t *Shell) Name() string { return "shell" }
 
 func (t *Shell) Description() string {
-	return "Run a command in the workspace sandbox. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Those calls ask the user for approval and do not run until they approve."
+	return "Run a command in the workspace sandbox. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Set profile to unsandboxed only when the command must run without Seatbelt. Those calls ask the user for approval and do not run until they approve. The user chooses any secret env names on the approval card."
 }
 
 func (t *Shell) Parameters() json.RawMessage { return schemaFor(new(shellArgs)) }
@@ -48,10 +50,13 @@ func (t *Shell) RequiresApproval(_ context.Context, raw json.RawMessage) (gogent
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return gogent.ApprovalDecision{}, fmt.Errorf("parse arguments: %w", err)
 	}
-	if len(args.ReadPaths) == 0 && len(args.WritePaths) == 0 && len(args.NetworkHosts) == 0 && args.Network == "" {
+	if args.Profile != sandbox.ProfileUnsandboxed && len(args.ReadPaths) == 0 && len(args.WritePaths) == 0 && len(args.NetworkHosts) == 0 && args.Network == "" {
 		return gogent.ApprovalDecision{}, nil
 	}
 	var reasons []string
+	if args.Profile == sandbox.ProfileUnsandboxed {
+		reasons = append(reasons, "Profile: sandbox -> unsandboxed")
+	}
 	if len(args.ReadPaths) > 0 || len(args.WritePaths) > 0 {
 		reads, writes, err := t.canonicalGrants(args)
 		if err != nil {
@@ -80,7 +85,7 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	if command == "" {
 		return nil, fmt.Errorf("command is required")
 	}
-	if args.Profile != "" && args.Profile != sandbox.ProfileSandbox && args.Profile != "extra_paths" {
+	if args.Profile != "" && args.Profile != sandbox.ProfileSandbox && args.Profile != "extra_paths" && args.Profile != sandbox.ProfileUnsandboxed {
 		t.audit(command, args.Cwd, sandbox.ProfileSandbox, "denied", -1, time.Since(started))
 		return accessDenied(args.Profile, "only the sandbox profile is available"), nil
 	}
@@ -106,7 +111,7 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		}
 		cwd = resolved
 	}
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && args.Profile != sandbox.ProfileUnsandboxed {
 		t.audit(command, cwd, sandbox.ProfileSandbox, "denied", -1, time.Since(started))
 		return accessDenied(cwd, "sandboxed shell is only available on macOS"), nil
 	}
@@ -123,6 +128,8 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	defer func() { _ = os.RemoveAll(tmp) }()
 
 	env := sandbox.ScrubbedEnv(tmp)
+	injected := injectedSecretNames(t.Secrets, args.SecretNames)
+	env = append(env, injectedEnv(t.Secrets, injected)...)
 	network := sandbox.NetworkDeny
 	var ports []int
 	if args.Network == sandbox.NetworkUnrestricted {
@@ -158,15 +165,18 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		Argv:        []string{"/bin/sh", "-c", command},
 	}
 	profileName := sandbox.ProfileSandbox
-	if len(reads) > 0 || len(writes) > 0 {
+	if args.Profile == sandbox.ProfileUnsandboxed {
+		profile.Name = sandbox.ProfileUnsandboxed
+		profileName = sandbox.ProfileUnsandboxed
+	} else if len(reads) > 0 || len(writes) > 0 {
 		profileName = "extra_paths"
 	}
-	result, err := sandbox.Launch(ctx, profile)
+	result, err := launchCommand(ctx, profile)
 	if err != nil {
-		t.audit(command, cwd, profileName, "failed", result.ExitCode, time.Since(started))
+		t.audit(command, cwd, profileName, "failed", result.ExitCode, time.Since(started), injected)
 		return nil, err
 	}
-	t.audit(command, cwd, profileName, "ran", result.ExitCode, time.Since(started))
+	t.audit(command, cwd, profileName, "ran", result.ExitCode, time.Since(started), injected)
 	payload := map[string]any{
 		"exit_code": result.ExitCode,
 		"stdout":    result.Stdout,
@@ -282,18 +292,52 @@ func grantReason(reads, writes []string) string {
 	return "Elevated file access: " + strings.Join(parts, "; ")
 }
 
-func (t *Shell) audit(command, cwd, profileName, decision string, exitCode int, duration time.Duration) {
+func (t *Shell) audit(command, cwd, profileName, decision string, exitCode int, duration time.Duration, secrets ...[]string) {
 	if t.HomeDir == "" {
 		return
 	}
-	line := fmt.Sprintf("%s tool=shell command=%q cwd=%q profile=%s decision=%s exit=%d duration=%s\n",
-		time.Now().UTC().Format(time.RFC3339), command, cwd, profileName, decision, exitCode, duration.Round(time.Millisecond))
+	names := ""
+	if len(secrets) > 0 && len(secrets[0]) > 0 {
+		names = " secrets=" + strings.Join(secrets[0], ",")
+	}
+	line := fmt.Sprintf("%s tool=shell command=%q cwd=%q profile=%s decision=%s exit=%d duration=%s%s\n",
+		time.Now().UTC().Format(time.RFC3339), command, cwd, profileName, decision, exitCode, duration.Round(time.Millisecond), names)
 	f, err := os.OpenFile(t.HomeDir+"/audit.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
 	defer func() { _ = f.Close() }()
 	_, _ = f.WriteString(line)
+}
+
+var launchCommand = sandbox.Launch
+
+func injectedSecretNames(secrets map[string]string, requested []string) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range requested {
+		if seen[name] || strings.ContainsAny(name, "=\n\r") {
+			continue
+		}
+		seen[name] = true
+		switch name {
+		case "openai_api_key", "search_api_key":
+			continue
+		}
+		if _, ok := secrets[name]; !ok {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+func injectedEnv(secrets map[string]string, names []string) []string {
+	env := make([]string, 0, len(names))
+	for _, name := range names {
+		env = append(env, name+"="+secrets[name])
+	}
+	return env
 }
 
 func homeDir() string {

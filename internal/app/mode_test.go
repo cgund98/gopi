@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -22,7 +24,7 @@ func TestModesSwitchRegistryAndKeepTranscript(t *testing.T) {
 		OpenAIAPIKey:  "test-key",
 		HomeDir:       t.TempDir(),
 		Network:       "deny",
-	}, root, trust.WorkspaceTrusted)
+	}, root, trust.WorkspaceTrusted, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,4 +92,49 @@ func toolNames(t *testing.T, registry *gogent.ToolRegistry) map[string]bool {
 		names[tool.Name()] = true
 	}
 	return names
+}
+
+type namedTool struct {
+	name string
+}
+
+func (t namedTool) Name() string                { return t.name }
+func (t namedTool) Description() string         { return "custom" }
+func (t namedTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t namedTool) RequiresApproval(context.Context, json.RawMessage) (gogent.ApprovalDecision, error) {
+	return gogent.ApprovalDecision{}, nil
+}
+func (t namedTool) Execute(context.Context, json.RawMessage) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
+}
+
+func TestExtraToolStaysOnItsMode(t *testing.T) {
+	root, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		Model:         "gpt-4o-mini",
+		MaxIterations: 2,
+		OpenAIAPIKey:  "test-key",
+		HomeDir:       t.TempDir(),
+		Network:       "deny",
+	}
+	session, err := New(cfg, root, trust.WorkspaceTrusted, map[Mode][]gogent.Tool{
+		ModeAsk: {namedTool{name: "forecast"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !toolNames(t, session.registries[ModeAsk])["forecast"] {
+		t.Fatal("ask registry missing forecast")
+	}
+	if toolNames(t, session.registries[ModeAgent])["forecast"] || toolNames(t, session.registries[ModePlan])["forecast"] {
+		t.Fatal("forecast leaked onto another mode")
+	}
+	if _, err := New(cfg, root, trust.WorkspaceTrusted, map[Mode][]gogent.Tool{
+		ModeAgent: {namedTool{name: "read_file"}},
+	}); err == nil {
+		t.Fatal("duplicate built-in name was accepted")
+	}
 }

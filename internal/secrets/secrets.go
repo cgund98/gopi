@@ -3,6 +3,7 @@ package secrets
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -32,6 +33,21 @@ func Load(homeDir string) (map[string]string, error) {
 		values = map[string]string{}
 	}
 	return values, nil
+}
+
+// OfferNames lists broker keys the user can attach to a shell call.
+// Host-only keys are omitted.
+func OfferNames(values map[string]string) []string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		switch name {
+		case "openai_api_key", "search_api_key":
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Redactor replaces known secret values and common token shapes.

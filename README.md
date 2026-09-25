@@ -9,6 +9,22 @@ go run ./cmd/gopi
 
 Optional: `-workspace <dir>`. The default workspace is the current directory. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
+Pushing to GitHub runs lint, tests, and a format check. Pushes to `main` open a release pull request through release-please. Merging that pull request tags the module and publishes it to the Go module proxy. Actions must be allowed to create and approve pull requests.
+
+## Library
+
+`cmd/gopi` is the built binary. It starts the same program as `gopi.Run` with the built-in tools. Another Go program can add a `gogent.Tool` to a mode. The tool is compiled into that program. The stock binary does not load plugins.
+
+```go
+err := gopi.Run(ctx,
+    gopi.WithWorkspace(dir),
+    gopi.WithTool(gopi.ModeAgent, myTool{}),
+    gopi.WithTool(gopi.ModeAsk, myTool{}),
+)
+```
+
+`WithTool` adds the tool only to that mode. It is not added to the delegate child. A name that matches a built-in tool fails at startup.
+
 ## Configuration
 
 Gopi keeps its files in `~/.gopi`, mode `0700`. `GOPI_HOME` overrides that directory. The first launch creates `config.toml`.
