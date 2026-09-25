@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cgund98/gogent"
+
 	"github.com/cgund98/gopi/internal/policy"
 )
 
@@ -44,7 +45,7 @@ func TestChildRegistryOmitsEditAndDelegate(t *testing.T) {
 			t.Fatalf("missing %s in %#v", name, names)
 		}
 	}
-	if names["edit_file"] || names["delegate"] || names["web_search"] {
+	if names["edit_file"] || names["delegate"] || names["web_search"] || names["forecast"] {
 		t.Fatalf("child tools = %#v", names)
 	}
 }

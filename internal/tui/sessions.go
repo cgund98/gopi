@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cgund98/gogent"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/cgund98/gogent"
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/session"
 )

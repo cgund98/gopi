@@ -201,7 +201,7 @@ func findUnresolvedAssistant(messages []gogent.Message) (gogent.Message, bool) {
 
 // buildPendingApprovals returns approval-required, unresolved tool calls on the
 // current assistant turn, in model tool-call order.
-func buildPendingApprovals(messages []gogent.Message, registry *gogent.ToolRegistry) []gogent.PendingToolCall {
+func buildPendingApprovals(messages []gogent.Message, _ *gogent.ToolRegistry) []gogent.PendingToolCall {
 	assistant, ok := findUnresolvedAssistant(messages)
 	if !ok {
 		return nil

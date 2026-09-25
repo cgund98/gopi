@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/cgund98/gogent"
-	"github.com/cgund98/gopi/internal/app"
-	"github.com/cgund98/gopi/internal/session"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -17,6 +15,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
+
+	"github.com/cgund98/gopi/internal/app"
+	"github.com/cgund98/gopi/internal/session"
 )
 
 type chatModel struct {
@@ -65,6 +66,8 @@ type chatModel struct {
 	sessionCursor    int
 	sessionErr       string
 	sessionConfirm   bool
+	secretNames      []string
+	secretSelected   map[string]map[string]bool
 
 	width  int
 	height int
@@ -153,7 +156,7 @@ func (m *chatModel) cancelRun() {
 		return
 	}
 	m.runCancel()
-	m.status = "Cancelling…"
+	m.status = "Canceling…"
 }
 
 func (m *chatModel) Init() tea.Cmd {

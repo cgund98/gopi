@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cgund98/gogent"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 
-	"github.com/cgund98/gogent"
 	"github.com/cgund98/gopi/internal/app"
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	sess "github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
@@ -126,6 +127,7 @@ func (m *programModel) bindChat(session *app.Session) {
 	if session.Model != nil {
 		m.chat.systemPrompt = session.Model.SystemPrompt()
 	}
+	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets)
 }
 
 func awaitSession(events <-chan tea.Msg) tea.Cmd {
@@ -193,7 +195,7 @@ func (m *programModel) runLoad(events chan tea.Msg, file *sess.File, width int) 
 		return
 	}
 	report("Building session")
-	next, err := app.New(cfg, root, lookup(root.Path))
+	next, err := app.New(cfg, root, lookup(root.Path), m.session.ExtraTools())
 	if err != nil {
 		events <- sessionLoadedMsg{Err: err}
 		return
@@ -271,7 +273,7 @@ func (m *programModel) resume(file sess.File) error {
 	if err != nil {
 		return err
 	}
-	next, err := app.New(m.session.Config, root, m.decisions.Lookup(root.Path))
+	next, err := app.New(m.session.Config, root, m.decisions.Lookup(root.Path), m.session.ExtraTools())
 	if err != nil {
 		return err
 	}

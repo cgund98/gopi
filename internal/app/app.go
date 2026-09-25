@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	openaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-
 	"github.com/cgund98/gogent"
 	"github.com/cgund98/gogent/inmemory"
 	"github.com/cgund98/gogent/openai"
+	openaisdk "github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/prompt"
@@ -44,12 +44,15 @@ type Session struct {
 	Mode      Mode
 
 	registries map[Mode]*gogent.ToolRegistry
+	extra      map[Mode][]gogent.Tool
 	client     openaisdk.Client
 	basePrompt string
 }
 
 // New builds the agent, registry, and in-memory transcript for one run.
-func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace) (*Session, error) {
+// extra adds tools to a mode. A name that matches a built-in tool is an error.
+// Extra tools are not registered on the delegate child.
+func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace, extra map[Mode][]gogent.Tool) (*Session, error) {
 	if cfg.OpenAIAPIKey == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is required")
 	}
@@ -65,7 +68,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		&tools.Grep{Root: root, Rules: rules},
 		&tools.Find{Root: root, Rules: rules},
 	}
-	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts}
+	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets}
 	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets["search_api_key"]}
 	redact := gopisecrets.NewRedactor(cfg.Secrets).Apply
 
@@ -82,6 +85,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		WritePlan:  plan,
 		Mode:       ModeAgent,
 		registries: map[Mode]*gogent.ToolRegistry{},
+		extra:      extra,
 		client:     client,
 		basePrompt: text,
 	}
@@ -103,6 +107,9 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search)
 	askTools := append(append([]gogent.Tool{}, read...), search)
 	planTools := append(append([]gogent.Tool{}, read...), plan, search)
+	agentTools = append(agentTools, extra[ModeAgent]...)
+	askTools = append(askTools, extra[ModeAsk]...)
+	planTools = append(planTools, extra[ModePlan]...)
 	for mode, list := range map[Mode][]gogent.Tool{
 		ModeAgent: agentTools,
 		ModeAsk:   askTools,
@@ -123,6 +130,11 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		return nil, err
 	}
 	return session, nil
+}
+
+// ExtraTools returns tools added for each mode so a rebuilt session keeps them.
+func (s *Session) ExtraTools() map[Mode][]gogent.Tool {
+	return s.extra
 }
 
 func registerTools(list []gogent.Tool, redact func(string) string) (*gogent.ToolRegistry, error) {

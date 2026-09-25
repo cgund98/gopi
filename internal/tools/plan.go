@@ -10,9 +10,10 @@ import (
 	"unicode"
 
 	"github.com/cgund98/gogent"
+	"github.com/google/uuid"
+
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
-	"github.com/google/uuid"
 )
 
 const planIgnoreLine = ".gopi/plans"
@@ -111,11 +112,9 @@ func (t *WritePlan) destination(args writePlanArgs, assignID bool) (rel string, 
 	if err != nil {
 		return "", false, err
 	}
-	name := slug + ".md"
+	name := slug + "-<new>.md"
 	if assignID {
 		name = slug + "-" + uuid.NewString() + ".md"
-	} else {
-		name = slug + "-<new>.md"
 	}
 	return filepath.ToSlash(filepath.Join(".gopi", "plans", name)), true, nil
 }

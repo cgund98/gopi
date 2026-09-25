@@ -11,6 +11,7 @@ const (
 	DefaultTimeout     = 30 * time.Second
 	DefaultOutputLimit = 64 * 1024
 	ProfileSandbox     = "sandbox"
+	ProfileUnsandboxed = "unsandboxed"
 )
 
 // Profile is the host-computed sandbox for one command.

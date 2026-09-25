@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cgund98/gogent"
+
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
