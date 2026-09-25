@@ -1,0 +1,20 @@
+package prompt
+
+import "strings"
+import "testing"
+
+func TestBuiltinFollowsPiShape(t *testing.T) {
+	body := Builtin()
+	for _, want := range []string{"expert coding assistant", "<tools>", "<rules>", "Be concise in your responses", "read_file", "edit_file"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("prompt missing %q", want)
+		}
+	}
+}
+
+func TestWithWorkspace(t *testing.T) {
+	got := WithWorkspace("hello", "/tmp/repo")
+	if !strings.Contains(got, "<cwd>\n/tmp/repo\n</cwd>") {
+		t.Fatalf("prompt = %q", got)
+	}
+}
