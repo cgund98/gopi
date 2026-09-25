@@ -113,6 +113,130 @@ func TestBusyPromptShowsThinkingSpinner(t *testing.T) {
 	}
 }
 
+func TestWheelScrollsWhileAgentRuns(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.busy = true
+	chat.followChatEnd = true
+	chat.width = 40
+	var lines []string
+	for range 30 {
+		lines = append(lines, "line")
+	}
+	chat.messages = []gogent.Message{{
+		Role:    gogent.MessageRoleUser,
+		Content: strings.Join(lines, "\n"),
+	}}
+	chat.transcriptVP.Width = 40
+	chat.transcriptVP.Height = 6
+	chat.refreshTranscript(true)
+	start := chat.transcriptVP.YOffset
+	if start == 0 {
+		t.Fatal("history is not scrollable")
+	}
+
+	updated, _ := chat.Update(tea.KeyMsg{Type: tea.KeyUp})
+	chat = updated.(*chatModel)
+	if !chat.busy || chat.transcriptVP.YOffset >= start || chat.followChatEnd {
+		t.Fatalf("busy=%v offset %d -> %d follow=%v", chat.busy, start, chat.transcriptVP.YOffset, chat.followChatEnd)
+	}
+
+	held := chat.transcriptVP.YOffset
+	chat.messages = append(chat.messages, gogent.Message{Role: gogent.MessageRoleAssistant, Content: "more output"})
+	chat.refreshTranscript(chat.followChatEnd)
+	if chat.transcriptVP.YOffset != held {
+		t.Fatalf("new output jumped %d -> %d", held, chat.transcriptVP.YOffset)
+	}
+}
+
+func TestPasteKeepsNewlines(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.width = 60
+	chat.height = 24
+	updated, _ := chat.Update(tea.KeyMsg{Type: tea.KeyRunes, Paste: true, Runes: []rune("line one\r\nline two")})
+	chat = updated.(*chatModel)
+	if chat.input.Value() != "line one\nline two" || chat.input.LineCount() != 2 {
+		t.Fatalf("value = %q lines = %d", chat.input.Value(), chat.input.LineCount())
+	}
+	plain := stripANSI(chat.View())
+	if !strings.Contains(plain, "line one") || !strings.Contains(plain, "line two") {
+		t.Fatalf("view = %q", plain)
+	}
+}
+
+type shiftEnterMsg string
+
+func (m shiftEnterMsg) String() string { return string(m) }
+
+func TestShiftEnterInsertsNewline(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.input.SetValue("hello")
+	chat.input.CursorEnd()
+
+	updated, cmd := chat.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.busy || chat.input.Value() != "hello\n" {
+		t.Fatalf("alt+enter cmd=%v busy=%v value=%q", cmd, chat.busy, chat.input.Value())
+	}
+
+	updated, cmd = chat.Update(shiftEnterMsg(shiftEnterKitty))
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.busy || chat.input.Value() != "hello\n\n" {
+		t.Fatalf("kitty shift+enter cmd=%v busy=%v value=%q", cmd, chat.busy, chat.input.Value())
+	}
+
+	updated, cmd = chat.Update(shiftEnterMsg(shiftEnterModifyOther))
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.busy || chat.input.Value() != "hello\n\n\n" {
+		t.Fatalf("modifyOtherKeys shift+enter cmd=%v busy=%v value=%q", cmd, chat.busy, chat.input.Value())
+	}
+
+	updated, cmd = chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	chat = updated.(*chatModel)
+	if cmd == nil || !chat.busy || chat.input.Value() != "" {
+		t.Fatalf("enter cmd=%v busy=%v value=%q", cmd, chat.busy, chat.input.Value())
+	}
+
+	updated, _ = chat.Update(shiftEnterMsg(shiftEnterKitty))
+	if updated.(*chatModel).input.Value() != "" {
+		t.Fatal("shift+enter changed the prompt while a run was in progress")
+	}
+}
+
+func TestKittyKeysStayUsable(t *testing.T) {
+	ctrl := translateKitty(shiftEnterMsg(csiReport("99;5u")))
+	key, ok := ctrl.(tea.KeyMsg)
+	if !ok || key.String() != "ctrl+c" {
+		t.Fatalf("ctrl+c = %#v", ctrl)
+	}
+	esc := translateKitty(shiftEnterMsg(csiReport("27u")))
+	key, ok = esc.(tea.KeyMsg)
+	if !ok || key.String() != "esc" {
+		t.Fatalf("esc = %#v", esc)
+	}
+	shift := translateKitty(shiftEnterMsg(shiftEnterKitty))
+	if _, ok := shift.(tea.KeyMsg); ok {
+		t.Fatal("shift+enter was turned into enter")
+	}
+
+	model := &programModel{
+		phase: phaseChat,
+		chat:  newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster()),
+	}
+	model.chat.input.SetValue("hello")
+	model.chat.input.CursorEnd()
+	updated, cmd := model.Update(shiftEnterMsg(shiftEnterKitty))
+	model = updated.(*programModel)
+	if cmd != nil || model.chat.busy || model.chat.input.Value() != "hello\n" {
+		t.Fatalf("shift+enter cmd=%v busy=%v value=%q", cmd, model.chat.busy, model.chat.input.Value())
+	}
+
+	updated, cmd = model.Update(shiftEnterMsg(csiReport("99;5u")))
+	model = updated.(*programModel)
+	if cmd != nil || model.chat.input.Value() != "" {
+		t.Fatalf("ctrl+c cmd=%v value=%q", cmd, model.chat.input.Value())
+	}
+}
+
 func TestQTypesIntoPrompt(t *testing.T) {
 	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
 	chat.input.Focus()

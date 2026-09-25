@@ -82,18 +82,14 @@ func (t *Grep) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 			if entry.Name() == ".git" {
 				return filepath.SkipDir
 			}
+			if rule, ok := t.Rules.MatchRead(path); ok && !coversGrant(path, grants) {
+				appendDenied(&denied, t.Root.Path, path, rule)
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if rule, ok := t.Rules.MatchRead(path); ok && !coversGrant(path, grants) {
-			rel, relErr := filepath.Rel(t.Root.Path, path)
-			if relErr != nil {
-				rel = path
-			}
-			denied = append(denied, map[string]string{
-				"error":   "access_denied",
-				"path":    filepath.ToSlash(rel),
-				"message": "protected path " + rule,
-			})
+			appendDenied(&denied, t.Root.Path, path, rule)
 			return nil
 		}
 		if len(matches) >= maxGrepMatches {
@@ -109,6 +105,7 @@ func (t *Grep) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 	if err != nil && err != errStopWalk {
 		return nil, fmt.Errorf("search workspace: %w", err)
 	}
+	denied = trimDenied(denied)
 	payload := map[string]any{
 		"matches":   matches,
 		"denied":    denied,

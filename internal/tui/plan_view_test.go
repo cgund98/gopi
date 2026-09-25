@@ -142,8 +142,7 @@ func TestPlansMenuOrdersAndDeletesInsidePlansDir(t *testing.T) {
 	pressX := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}
 	updated, _ = chat.Update(pressX)
 	chat = updated.(*chatModel)
-	updated, _ = chat.Update(pressX)
-	chat = updated.(*chatModel)
+	chat.Update(pressX)
 	if _, err := os.Stat(newer); !os.IsNotExist(err) {
 		t.Fatal("newer plan was kept")
 	}

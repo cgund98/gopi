@@ -268,6 +268,13 @@ func TestUnsandboxedRequiresApprovalAndSkipsSeatbelt(t *testing.T) {
 	if strings.Contains(joined, "SSH_AUTH_SOCK") || strings.Contains(joined, "parent-secret") {
 		t.Fatalf("env = %s", joined)
 	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(joined, "HOME="+userHome) {
+		t.Fatalf("env = %s", joined)
+	}
 	if !containsOutput(raw, "ok") {
 		t.Fatalf("result = %s", raw)
 	}
@@ -278,8 +285,10 @@ func TestSeatbeltFailureDoesNotRetryUnsandboxed(t *testing.T) {
 	tool := &Shell{Root: root, HomeDir: t.TempDir()}
 	var names []string
 	orig := launchCommand
+	var sandboxedEnv string
 	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
 		names = append(names, profile.Name)
+		sandboxedEnv = strings.Join(profile.Env, "\n")
 		return sandbox.Result{}, fmt.Errorf("sandbox-exec failed")
 	}
 	defer func() { launchCommand = orig }()
@@ -302,6 +311,9 @@ func TestSeatbeltFailureDoesNotRetryUnsandboxed(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != sandbox.ProfileSandbox {
 		t.Fatalf("launches = %#v", names)
+	}
+	if strings.Contains(sandboxedEnv, "HOME=") {
+		t.Fatalf("sandboxed env = %s", sandboxedEnv)
 	}
 }
 

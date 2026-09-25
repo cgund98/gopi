@@ -28,7 +28,7 @@ func composerCommands() []completion {
 }
 
 func (m *chatModel) syncComplete() {
-	if m.busy || m.inApprovalMode() || m.planOpen || m.plansOpen || m.reviewOpen || m.sessionsOpen {
+	if m.busy || m.inApprovalMode() || m.planOpen || m.plansOpen || m.reviewOpen || m.sessionsOpen || strings.Contains(m.input.Value(), "\n") {
 		m.completeOpen = false
 		return
 	}

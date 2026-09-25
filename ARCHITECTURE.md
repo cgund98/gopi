@@ -185,7 +185,7 @@ Enforce with Seatbelt through `/usr/bin/sandbox-exec` and a profile generated pe
 The generated profile:
 
 - Allows read of the workspace and a small set of system paths the dynamic linker and the shell need (`/usr`, `/bin`, `/opt/homebrew`, `/dev/null`, and the user's selected toolchain roots).
-- Allows write only under the workspace write root and a session temp directory. `/tmp` is private to the command where the profile can express that, so a sandboxed command cannot rendezvous with an unsandboxed process through a shared temp file.
+- Allows write only under the workspace write root, a session temp directory, and `/dev/null`. `/tmp` is private to the command where the profile can express that, so a sandboxed command cannot rendezvous with an unsandboxed process through a shared temp file.
 - Denies read and write of protected paths with rules placed so they match before the workspace allow. Seatbelt is ordered; a workspace-wide allow that is evaluated first would hide the deny.
 - Denies writes to paths that stay protected even when the workspace is writable: `.git/config`, `.git/hooks`, `.git/info/attributes`, `.gopi/**`, ignore files, and the gopi binary's own install path.
 - Denies `network*` except the localhost proxy port when `network` is `allowlist`. When `network` is `deny`, all outbound network is denied, including raw sockets, so a binary that ignores `HTTP_PROXY` still fails.

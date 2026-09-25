@@ -36,6 +36,10 @@ func TestSeatbeltDeniesAfterWorkspaceAllow(t *testing.T) {
 	if sslAllow < 0 || privateDeny >= sslAllow || denyAt >= sslAllow {
 		t.Fatalf("CA bundle must stay readable after protected-path denies:\n%s", body)
 	}
+	nullAllow := strings.Index(body, `(allow file-write* (literal "/dev/null"))`)
+	if nullAllow < 0 || denyAt >= nullAllow {
+		t.Fatalf("/dev/null must be writable after protected-path denies:\n%s", body)
+	}
 	if !strings.Contains(body, "(deny network*)") {
 		t.Fatalf("missing network deny:\n%s", body)
 	}
@@ -97,6 +101,28 @@ func TestLaunchEcho(t *testing.T) {
 	result, err := Launch(context.Background(), profile)
 	if err != nil || result.ExitCode != 0 || result.Stdout != "hi\n" {
 		t.Fatalf("result=%#v err=%v\n%s", result, err, body)
+	}
+}
+
+func TestLaunchWritesDevNull(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS")
+	}
+	tmp, err := SessionTemp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	profile := Profile{
+		WriteRoots: []string{tmp},
+		Network:    NetworkDeny,
+		Env:        ScrubbedEnv(tmp),
+		WorkDir:    tmp,
+		Argv:       []string{"/bin/sh", "-c", "echo hi >/dev/null"},
+	}
+	result, err := Launch(context.Background(), profile)
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }
 

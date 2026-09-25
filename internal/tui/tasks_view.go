@@ -107,7 +107,7 @@ func renderPlanTodos(items []tools.Task, width int) string {
 			mark = "[~]"
 		case "completed":
 			mark = "[x]"
-		case "cancelled":
+		case "canceled":
 			mark = "[-]"
 		}
 		for _, line := range wrapWidth(mark+" "+item.Content, width) {

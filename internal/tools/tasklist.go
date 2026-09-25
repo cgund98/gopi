@@ -18,14 +18,14 @@ const (
 	taskPending    = "pending"
 	taskInProgress = "in_progress"
 	taskCompleted  = "completed"
-	taskCancelled  = "cancelled"
+	taskCancelled  = "canceled"
 )
 
 // Task is one checklist item stored on a plan and in a tasks result.
 type Task struct {
 	ID      string `json:"id" jsonschema:"description=Short stable id, such as fetch-tool."`
 	Content string `json:"content" jsonschema:"description=What the task is."`
-	Status  string `json:"status,omitempty" jsonschema:"description=pending, in_progress, completed, or cancelled. Defaults to pending."`
+	Status  string `json:"status,omitempty" jsonschema:"description=pending, in_progress, completed, or canceled. Defaults to pending."`
 }
 
 // TaskChange is one item that finished or left the list in a single tasks call.
@@ -207,7 +207,7 @@ func TaskChanges(prev, next []Task) []TaskChange {
 			changes = append(changes, TaskChange{Kind: "done", Content: found.Content})
 		}
 		if item.Status != taskCancelled && found.Status == taskCancelled {
-			changes = append(changes, TaskChange{Kind: "cancelled", Content: found.Content})
+			changes = append(changes, TaskChange{Kind: "canceled", Content: found.Content})
 		}
 	}
 	for _, item := range next {
@@ -218,7 +218,7 @@ func TaskChanges(prev, next []Task) []TaskChange {
 			changes = append(changes, TaskChange{Kind: "done", Content: item.Content})
 		}
 		if item.Status == taskCancelled {
-			changes = append(changes, TaskChange{Kind: "cancelled", Content: item.Content})
+			changes = append(changes, TaskChange{Kind: "canceled", Content: item.Content})
 		}
 	}
 	return changes
@@ -288,7 +288,7 @@ func normalizeTask(item Task) (Task, error) {
 	switch item.Status {
 	case taskPending, taskInProgress, taskCompleted, taskCancelled:
 	default:
-		return Task{}, fmt.Errorf("task status must be pending, in_progress, completed, or cancelled")
+		return Task{}, fmt.Errorf("task status must be pending, in_progress, completed, or canceled")
 	}
 	return item, nil
 }

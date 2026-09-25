@@ -34,7 +34,7 @@ type WritePlan struct {
 func (t *WritePlan) Name() string { return "write_plan" }
 
 func (t *WritePlan) Description() string {
-	return "Create or update a plan under <workspace>/.gopi/plans. Pass path to overwrite an existing plan file. Omit path, or pass a path that does not exist, to create <plan_name>-<uuid>.md. Pass todos for the implementation steps. Each todo has an id, content, and status of pending, in_progress, completed, or cancelled. The body is the markdown plan and does not include the todo list. A plan inside the workspace does not ask for approval. An untrusted workspace is refused. Saving a plan adds .gopi/plans to the workspace-root .gitignore when that file already exists."
+	return "Create or update a plan under <workspace>/.gopi/plans. Pass path to overwrite an existing plan file. Omit path, or pass a path that does not exist, to create <plan_name>-<uuid>.md. Pass todos for the implementation steps. Each todo has an id, content, and status of pending, in_progress, completed, or canceled. The body is the markdown plan and does not include the todo list. A plan inside the workspace does not ask for approval. An untrusted workspace is refused. Saving a plan adds .gopi/plans to the workspace-root .gitignore when that file already exists."
 }
 
 func (t *WritePlan) Parameters() json.RawMessage { return schemaFor(new(writePlanArgs)) }

@@ -42,7 +42,7 @@ type Shell struct {
 func (t *Shell) Name() string { return "shell" }
 
 func (t *Shell) Description() string {
-	return "Run a command in the workspace sandbox. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Set profile to unsandboxed only when the command must run without Seatbelt. Those calls ask the user for approval and do not run until they approve. The user chooses any secret env names on the approval card."
+	return "Run a command in the workspace sandbox. Keep the command simple. If it needs one or two paths outside the workspace, set read_paths or write_paths instead of working around the sandbox. If it needs more than two or three, set profile to unsandboxed instead of listing them. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths when there are only a few, or with profile unsandboxed when there are more. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Those calls ask the user for approval and do not run until they approve. The user chooses any secret env names on the approval card."
 }
 
 func (t *Shell) Parameters() json.RawMessage { return schemaFor(new(shellArgs)) }
@@ -170,6 +170,10 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	if args.Profile == sandbox.ProfileUnsandboxed {
 		profile.Name = sandbox.ProfileUnsandboxed
 		profileName = sandbox.ProfileUnsandboxed
+		if home := homeDir(); home != "" {
+			env = append(env, "HOME="+home)
+			profile.Env = env
+		}
 	} else if len(reads) > 0 || len(writes) > 0 {
 		profileName = "extra_paths"
 	}

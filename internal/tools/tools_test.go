@@ -287,6 +287,44 @@ func TestGrepOmitsProtectedFile(t *testing.T) {
 	}
 }
 
+func TestGrepSkipsProtectedDirectory(t *testing.T) {
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, ".gitignore"), []byte("scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(root.Path, "scratch", "demo", ".tmp", "cache")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.WriteFile(filepath.Join(cache, name), []byte("needle\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := (&Grep{Root: root, Rules: rules}).Execute(context.Background(), json.RawMessage(`{"pattern":"needle"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+		Denied []struct {
+			Path string `json:"path"`
+		} `json:"denied"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Matches) != 0 || len(payload.Denied) != 1 || payload.Denied[0].Path != "scratch" {
+		t.Fatalf("result = %s", result)
+	}
+}
+
 func TestFindProtectedPathRequiresApproval(t *testing.T) {
 	root := openTemp(t)
 	if err := os.WriteFile(filepath.Join(root.Path, ".env"), []byte("x"), 0o600); err != nil {

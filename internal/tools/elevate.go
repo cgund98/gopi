@@ -3,12 +3,15 @@ package tools
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cgund98/gogent"
 
 	"github.com/cgund98/gopi/internal/workspace"
 )
+
+const maxDeniedPaths = 8
 
 func readGrantDecision(root workspace.Root, paths []string) (gogent.ApprovalDecision, error) {
 	if len(paths) == 0 {
@@ -40,6 +43,30 @@ func coversGrant(path string, grants []string) bool {
 		}
 	}
 	return false
+}
+
+func appendDenied(denied *[]map[string]string, root, path, rule string) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		rel = path
+	}
+	*denied = append(*denied, map[string]string{
+		"error":   "access_denied",
+		"path":    filepath.ToSlash(rel),
+		"message": "protected path " + rule,
+	})
+}
+
+func trimDenied(denied []map[string]string) []map[string]string {
+	if len(denied) <= maxDeniedPaths {
+		return denied
+	}
+	extra := len(denied) - maxDeniedPaths
+	trimmed := append([]map[string]string{}, denied[:maxDeniedPaths]...)
+	return append(trimmed, map[string]string{
+		"error":   "access_denied",
+		"message": fmt.Sprintf("%d more protected paths omitted", extra),
+	})
 }
 
 func elevationRetry(tool string, blocked []string) (string, []string) {

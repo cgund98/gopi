@@ -8,9 +8,10 @@ import (
 	"strings"
 
 	"github.com/cgund98/gogent"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,7 +33,7 @@ type chatModel struct {
 	messages         []gogent.Message
 	toolCards        []toolCardView
 	pendingApprovals []gogent.PendingToolCall
-	input            textinput.Model
+	input            textarea.Model
 	transcriptVP     viewport.Model
 	approvalList     list.Model
 	activeToolCallID string
@@ -65,6 +66,7 @@ type chatModel struct {
 	plansOpen        bool
 	planRows         []string
 	planCursor       int
+	planScroll       int
 	planConfirm      bool
 	planListErr      string
 	seenPlans        map[string]bool
@@ -80,6 +82,7 @@ type chatModel struct {
 	sessionsHome     string
 	sessionRows      []session.File
 	sessionCursor    int
+	sessionScroll    int
 	sessionErr       string
 	sessionConfirm   bool
 	review           []session.ReviewEntry
@@ -112,12 +115,20 @@ func newChatModel(
 	registry *gogent.ToolRegistry,
 	events *gogent.ChannelBroadcaster,
 ) *chatModel {
-	ti := textinput.New()
+	ti := textarea.New()
 	ti.Placeholder = "Ask anything…"
 	ti.Prompt = "> "
+	ti.ShowLineNumbers = false
+	ti.CharLimit = 100000
+	ti.MaxHeight = maxComposerLines
+	ti.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter", "alt+enter"))
+	ti.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ti.BlurredStyle.CursorLine = lipgloss.NewStyle()
+	ti.FocusedStyle.Prompt = lipgloss.NewStyle()
+	ti.BlurredStyle.Prompt = lipgloss.NewStyle()
+	ti.SetHeight(1)
+	ti.SetWidth(60)
 	ti.Focus()
-	ti.CharLimit = 2000
-	ti.Width = 60
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -185,7 +196,7 @@ func (m *chatModel) cancelRun() {
 
 func (m *chatModel) Init() tea.Cmd {
 	return tea.Batch(
-		textinput.Blink,
+		textarea.Blink,
 		listenForChatEvent(m.events.Channel()),
 	)
 }
@@ -344,6 +355,9 @@ func (m *chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	default:
+		if m.composerOpen() && isShiftEnter(msg) {
+			return m.insertNewline()
+		}
 		if m.inApprovalMode() {
 			var cmd tea.Cmd
 			m.approvalList, cmd = m.approvalList.Update(msg)
@@ -370,7 +384,7 @@ func (m *chatModel) afterStoreRefresh() {
 	m.noticeWrittenPlans()
 	m.applyLayout()
 	m.syncApprovalFocus()
-	m.refreshTranscript(m.followChatEnd || m.busy)
+	m.refreshTranscript(m.followChatEnd)
 	if m.planOpen {
 		m.input.Blur()
 		return
@@ -394,6 +408,22 @@ func (m *chatModel) afterStoreRefresh() {
 	m.status = ""
 }
 
+func historyScrollKey(msg tea.KeyMsg) bool {
+	switch msg.String() {
+	case "up", "down", "pgup", "pgdown", "home", "end":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *chatModel) scrollHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.transcriptVP, cmd = m.transcriptVP.Update(msg)
+	m.followChatEnd = m.transcriptVP.AtBottom()
+	return m, cmd
+}
+
 func (m *chatModel) handleGlobalKeys(msg tea.KeyMsg) (quit bool) {
 	switch msg.String() {
 	case "ctrl+c":
@@ -409,7 +439,18 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleApprovalKey(msg)
 	}
 
+	if m.busy && historyScrollKey(msg) {
+		return m.scrollHistory(msg)
+	}
 	if m.busy {
+		return m, nil
+	}
+
+	if msg.Paste {
+		text := strings.ReplaceAll(string(msg.Runes), "\r\n", "\n")
+		text = strings.ReplaceAll(text, "\r", "\n")
+		m.input.InsertString(text)
+		m.syncComplete()
 		return m, nil
 	}
 
@@ -423,10 +464,19 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.moveComplete(delta)
 			return m, nil
 		}
-		var cmd tea.Cmd
-		m.transcriptVP, cmd = m.transcriptVP.Update(msg)
-		m.followChatEnd = m.transcriptVP.AtBottom()
-		return m, cmd
+		if msg.String() == "up" && m.input.LineCount() > 1 && m.input.Line() > 0 {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		}
+		if msg.String() == "down" && m.input.LineCount() > 1 && m.input.Line() < m.input.LineCount()-1 {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		}
+		return m.scrollHistory(msg)
+	case "shift+enter", "alt+enter":
+		return m.insertNewline()
 	case "tab":
 		if m.completeOpen {
 			m.acceptComplete()
@@ -545,6 +595,7 @@ func (m *chatModel) footerLines() int {
 		footer += 1 + n
 	} else {
 		footer++
+		footer += m.inputExtraLines()
 	}
 	if m.pendingReviewCount() > 0 {
 		footer += 2
@@ -573,11 +624,81 @@ func (m *chatModel) applyLayout() {
 		m.approvalList.SetWidth(innerW)
 		m.approvalList.SetHeight(4)
 	} else {
-		m.input.Width = innerW - len(m.input.Prompt)
-		if m.input.Width < 10 {
-			m.input.Width = 10
-		}
+		m.syncComposer(innerW)
 	}
+}
+
+const maxComposerLines = 8
+
+func (m *chatModel) composerOpen() bool {
+	return !m.sessionLoading && !m.busy && !m.inApprovalMode() && !m.planOpen && !m.plansOpen && !m.reviewOpen && !m.sessionsOpen
+}
+
+func (m *chatModel) insertNewline() (tea.Model, tea.Cmd) {
+	m.input.InsertString("\n")
+	m.syncComplete()
+	return m, nil
+}
+
+// Terminals report Shift+Enter as alt+enter, or as a Kitty or xterm CSI sequence.
+func isShiftEnter(msg tea.Msg) bool {
+	text, ok := msg.(interface{ String() string })
+	if !ok {
+		return false
+	}
+	switch text.String() {
+	case "shift+enter", "alt+enter", shiftEnterKitty, shiftEnterModifyOther:
+		return true
+	default:
+		return false
+	}
+}
+
+var (
+	shiftEnterKitty       = csiReport("13;2u")
+	shiftEnterModifyOther = csiReport("27;2;13~")
+)
+
+func csiReport(body string) string {
+	return fmt.Sprintf("?CSI%+v?", []byte(body))
+}
+
+func (m *chatModel) inputExtraLines() int {
+	n := m.input.LineCount()
+	if n < 1 {
+		n = 1
+	}
+	if n > maxComposerLines {
+		n = maxComposerLines
+	}
+	return n - 1
+}
+
+func (m *chatModel) syncComposer(width int) {
+	prompt := modePrompt(m.mode)
+	m.input.Prompt = prompt
+	promptWidth := lipgloss.Width(prompt)
+	if promptWidth < 1 {
+		promptWidth = 1
+	}
+	m.input.SetPromptFunc(promptWidth, func(lineIdx int) string {
+		if lineIdx == 0 {
+			return prompt
+		}
+		return strings.Repeat(" ", promptWidth)
+	})
+	if width < promptWidth+10 {
+		width = promptWidth + 10
+	}
+	m.input.SetWidth(width)
+	height := m.input.LineCount()
+	if height < 1 {
+		height = 1
+	}
+	if height > maxComposerLines {
+		height = maxComposerLines
+	}
+	m.input.SetHeight(height)
 }
 
 func (m *chatModel) View() string {

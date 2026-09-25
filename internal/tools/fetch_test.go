@@ -11,7 +11,7 @@ import (
 )
 
 func TestWebFetchReadsPlainText(t *testing.T) {
-	tool := testFetch(t, func(w http.ResponseWriter, r *http.Request) {
+	tool := testFetch(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("hello from the page"))
 	})
@@ -32,7 +32,7 @@ func TestWebFetchReadsPlainText(t *testing.T) {
 }
 
 func TestWebFetchReadsHTMLAsText(t *testing.T) {
-	tool := testFetch(t, func(w http.ResponseWriter, r *http.Request) {
+	tool := testFetch(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<html><head><title>Docs</title><style>p{color:red}</style></head><body><script>alert(1)</script><p>Read this</p></body></html>`))
 	})
@@ -90,7 +90,7 @@ func testFetch(t *testing.T, handler http.HandlerFunc) *WebFetch {
 			return []net.IP{net.ParseIP("1.2.3.4")}, nil
 		},
 		Client: &http.Client{Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 			},
 		}},

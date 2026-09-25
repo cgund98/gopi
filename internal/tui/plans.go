@@ -17,6 +17,7 @@ import (
 func (m *chatModel) openPlans() {
 	m.plansOpen = true
 	m.planCursor = 0
+	m.planScroll = 0
 	m.planConfirm = false
 	m.planListErr = ""
 	m.planRows = m.listPlans()
@@ -219,17 +220,28 @@ func (m *chatModel) buildPlan() tea.Cmd {
 }
 
 func (m *chatModel) renderPlans() string {
+	visible := listCapacity(m.height, listChrome(m.width, m.planListErr), 1)
+	m.planScroll = fitListOffset(m.planScroll, m.planCursor, len(m.planRows), visible)
+	start, end := 0, len(m.planRows)
+	if visible > 0 && len(m.planRows) > 0 {
+		start = m.planScroll
+		end = start + visible
+		if end > len(m.planRows) {
+			end = len(m.planRows)
+		}
+	}
+
 	var b strings.Builder
-	b.WriteString(planTitleStyle.Render("Plans"))
+	b.WriteString(planTitleStyle.Render(fmt.Sprintf("Plans (%d)", len(m.planRows))))
 	b.WriteString("\n\n")
 	if len(m.planRows) == 0 {
 		b.WriteString("No saved plans")
 	}
-	for i, path := range m.planRows {
-		if i > 0 {
+	for i := start; i < end; i++ {
+		if i > start {
 			b.WriteByte('\n')
 		}
-		line := path
+		line := m.planRows[i]
 		if i == m.planCursor {
 			line = agentModeStyle.Render(line)
 		}

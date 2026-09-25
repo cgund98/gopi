@@ -24,7 +24,7 @@ func TestTaskPanelDropsFinishedItems(t *testing.T) {
 	}
 	done := []tools.Task{
 		{ID: "a", Content: "Done one", Status: "completed"},
-		{ID: "b", Content: "Done two", Status: "cancelled"},
+		{ID: "b", Content: "Done two", Status: "canceled"},
 	}
 	if renderTaskPanel(done, 40) != "" {
 		t.Fatal("panel should hide when nothing is open")

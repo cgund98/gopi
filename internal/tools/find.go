@@ -72,6 +72,10 @@ func (t *Find) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 			if entry.Name() == ".git" {
 				return filepath.SkipDir
 			}
+			if rule, ok := t.Rules.MatchRead(path); ok && !coversGrant(path, grants) {
+				appendDenied(&denied, t.Root.Path, path, rule)
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		rel, err := filepath.Rel(t.Root.Path, path)
@@ -80,11 +84,7 @@ func (t *Find) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 		}
 		rel = filepath.ToSlash(rel)
 		if rule, ok := t.Rules.MatchRead(path); ok && !coversGrant(path, grants) {
-			denied = append(denied, map[string]string{
-				"error":   "access_denied",
-				"path":    rel,
-				"message": "protected path " + rule,
-			})
+			appendDenied(&denied, t.Root.Path, path, rule)
 			return nil
 		}
 		if len(files) >= maxFindFiles {
@@ -99,6 +99,7 @@ func (t *Find) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 	if err != nil && err != errStopWalk {
 		return nil, fmt.Errorf("list workspace files: %w", err)
 	}
+	denied = trimDenied(denied)
 	payload := map[string]any{
 		"files":     files,
 		"denied":    denied,

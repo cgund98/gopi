@@ -25,6 +25,8 @@ func Run(ctx context.Context, session *app.Session, decisions *trust.Store, resu
 			return err
 		}
 	}
+	enableDisambiguateKeysMode()
+	defer disableDisambiguateKeysMode()
 	program := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := program.Run()
 	return err
@@ -79,6 +81,7 @@ func (m *programModel) Init() tea.Cmd {
 }
 
 func (m *programModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	msg = translateKitty(msg)
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = size.Width
 		m.height = size.Height

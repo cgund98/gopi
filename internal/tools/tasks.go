@@ -11,7 +11,7 @@ import (
 type taskUpdate struct {
 	ID      string `json:"id" jsonschema:"description=Id of an existing task."`
 	Content string `json:"content,omitempty" jsonschema:"description=Replacement text. Omit to leave the text unchanged."`
-	Status  string `json:"status,omitempty" jsonschema:"description=pending, in_progress, completed, or cancelled."`
+	Status  string `json:"status,omitempty" jsonschema:"description=pending, in_progress, completed, or canceled."`
 }
 
 type tasksArgs struct {

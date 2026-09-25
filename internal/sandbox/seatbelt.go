@@ -53,6 +53,9 @@ func SeatbeltProfile(profile Profile) (string, error) {
 	// /etc/ssl is a symlink into /private, and the *.pem floor would deny cert.pem.
 	// This allow is last so the system CA bundle stays readable.
 	writeSubpath(&b, "allow file-read*", "/private/etc/ssl")
+	// Compilers and linters open /dev/null for write. It is not under a write root.
+	writeLiteral(&b, "allow file-read*", "/dev/null")
+	writeLiteral(&b, "allow file-write*", "/dev/null")
 	b.WriteString("(deny network*)\n")
 	switch profile.Network {
 	case NetworkAllowlist:
@@ -77,6 +80,10 @@ func outsideReadDenies(home string) []string {
 
 func writeSubpath(b *strings.Builder, op, path string) {
 	fmt.Fprintf(b, "(%s (subpath %s))\n", op, quoteSeatbelt(path))
+}
+
+func writeLiteral(b *strings.Builder, op, path string) {
+	fmt.Fprintf(b, "(%s (literal %s))\n", op, quoteSeatbelt(path))
 }
 
 func writeRegex(b *strings.Builder, op, pattern string) {
