@@ -4,7 +4,9 @@ import "time"
 
 const (
 	// NetworkDeny blocks every outbound socket, including DNS.
-	NetworkDeny = "deny"
+	NetworkDeny         = "deny"
+	NetworkAllowlist    = "allowlist"
+	NetworkUnrestricted = "unrestricted"
 
 	DefaultTimeout     = 30 * time.Second
 	DefaultOutputLimit = 64 * 1024
@@ -23,6 +25,7 @@ type Profile struct {
 	ExtraReads  []string
 	ExtraWrites []string
 	Network     string
+	ProxyPorts  []int
 	Env         []string
 	Timeout     time.Duration
 	OutputLimit int

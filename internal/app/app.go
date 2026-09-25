@@ -46,7 +46,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace)
 		&tools.ReadFile{Root: root, Rules: rules},
 		&tools.Grep{Root: root, Rules: rules},
 		&tools.Find{Root: root, Rules: rules},
-		&tools.Shell{Root: root, HomeDir: cfg.HomeDir},
+		&tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts},
 		edit,
 	}
 	redact := gopisecrets.NewRedactor(cfg.Secrets).Apply

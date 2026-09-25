@@ -65,7 +65,7 @@ func newChatModel(
 	ti.Width = 60
 
 	vp := viewport.New(80, 20)
-	vp.MouseWheelEnabled = true
+	vp.MouseWheelEnabled = false
 	vp.SetContent(helpStyle.Render("Send a message to get started."))
 
 	return &chatModel{

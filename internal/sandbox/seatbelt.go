@@ -8,8 +8,13 @@ import (
 // SeatbeltProfile renders a Seatbelt profile for sandbox-exec.
 // Seatbelt is last-match-wins, so protected-path denials follow the workspace allow.
 func SeatbeltProfile(profile Profile) (string, error) {
-	if profile.Network != NetworkDeny && profile.Network != "" {
+	switch profile.Network {
+	case "", NetworkDeny, NetworkAllowlist, NetworkUnrestricted:
+	default:
 		return "", fmt.Errorf("network mode %q is not available", profile.Network)
+	}
+	if profile.Network == NetworkAllowlist && len(profile.ProxyPorts) == 0 {
+		return "", fmt.Errorf("allowlist network requires a proxy port")
 	}
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
@@ -45,7 +50,18 @@ func SeatbeltProfile(profile Profile) (string, error) {
 		writeSubpath(&b, "allow file-write*", path)
 		writeSubpath(&b, "allow file-read*", path)
 	}
+	// /etc/ssl is a symlink into /private, and the *.pem floor would deny cert.pem.
+	// This allow is last so the system CA bundle stays readable.
+	writeSubpath(&b, "allow file-read*", "/private/etc/ssl")
 	b.WriteString("(deny network*)\n")
+	switch profile.Network {
+	case NetworkAllowlist:
+		for _, port := range profile.ProxyPorts {
+			fmt.Fprintf(&b, "(allow network* (remote tcp \"localhost:%d\"))\n", port)
+		}
+	case NetworkUnrestricted:
+		b.WriteString("(allow network*)\n")
+	}
 	b.WriteString("(deny process-info* (target others))\n")
 	b.WriteString("(deny appleevent-send)\n")
 	return b.String(), nil

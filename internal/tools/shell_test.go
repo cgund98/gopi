@@ -62,6 +62,29 @@ func TestShellExtraPathsRequireApproval(t *testing.T) {
 	}
 }
 
+func TestShellNetworkRequiresApproval(t *testing.T) {
+	root := openTemp(t)
+	tool := &Shell{Root: root, HomeDir: t.TempDir()}
+	hosts, err := tool.RequiresApproval(context.Background(), json.RawMessage(`{"command":"curl https://example.com","network_hosts":["example.com"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hosts.Required || !strings.Contains(hosts.Reason, "example.com") {
+		t.Fatalf("hosts = %#v", hosts)
+	}
+	open, err := tool.RequiresApproval(context.Background(), json.RawMessage(`{"command":"curl https://example.com","network":"unrestricted"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !open.Required || !strings.Contains(open.Reason, "deny -> unrestricted") {
+		t.Fatalf("unrestricted = %#v", open)
+	}
+	hint, blocked := networkElevation("", "nc: connect: Operation not permitted\n")
+	if !strings.Contains(hint, "network_hosts") {
+		t.Fatalf("hint = %q hosts = %#v", hint, blocked)
+	}
+}
+
 func TestShellFileDenialAsksToRetryElevated(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("sandboxed shell runs on macOS")

@@ -200,6 +200,12 @@ func renderPathGrants(args json.RawMessage, width int) string {
 	for _, path := range stringListArg(args, "write_paths") {
 		lines = append(lines, "write "+path)
 	}
+	for _, host := range stringListArg(args, "network_hosts") {
+		lines = append(lines, "network "+host)
+	}
+	if stringArg(args, "network") == "unrestricted" {
+		lines = append(lines, "network unrestricted")
+	}
 	if len(lines) == 0 {
 		return ""
 	}

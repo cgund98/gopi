@@ -13,7 +13,7 @@ import (
 // Run starts the terminal UI. An unknown workspace asks for trust before the chat.
 func Run(ctx context.Context, session *app.Session, decisions *trust.Store) error {
 	model := newProgram(ctx, session, decisions)
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	program := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := program.Run()
 	return err
 }

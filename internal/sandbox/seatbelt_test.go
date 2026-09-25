@@ -32,11 +32,31 @@ func TestSeatbeltDeniesAfterWorkspaceAllow(t *testing.T) {
 	if privateDeny < 0 || selectAllow < 0 || privateDeny >= selectAllow {
 		t.Fatalf("shell locale path must be readable after the /private deny:\n%s", body)
 	}
+	sslAllow := strings.Index(body, `(allow file-read* (subpath "/private/etc/ssl"))`)
+	if sslAllow < 0 || privateDeny >= sslAllow || denyAt >= sslAllow {
+		t.Fatalf("CA bundle must stay readable after protected-path denies:\n%s", body)
+	}
 	if !strings.Contains(body, "(deny network*)") {
 		t.Fatalf("missing network deny:\n%s", body)
 	}
 	if strings.Contains(body, "allow network") {
 		t.Fatalf("network must stay denied:\n%s", body)
+	}
+	allowlist, err := SeatbeltProfile(Profile{Network: NetworkAllowlist, ProxyPorts: []int{9}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	denyNet := strings.Index(allowlist, "(deny network*)")
+	allowNet := strings.Index(allowlist, `(allow network* (remote tcp "localhost:9"))`)
+	if denyNet < 0 || allowNet < 0 || denyNet >= allowNet {
+		t.Fatalf("proxy allow must follow the network deny:\n%s", allowlist)
+	}
+	open, err := SeatbeltProfile(Profile{Network: NetworkUnrestricted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Index(open, "(deny network*)") >= strings.Index(open, "(allow network*)") {
+		t.Fatalf("unrestricted allow must follow the network deny:\n%s", open)
 	}
 	elevated := Profile{
 		DenyRead:   []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$"},

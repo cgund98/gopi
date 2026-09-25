@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
@@ -23,9 +24,24 @@ const (
 )
 
 // File is the on-disk ~/.gopi/config.toml shape.
+// [sandbox.network] is rewritten to [sandbox.hosts] before decode, because TOML
+// cannot store both network = "deny" and a [sandbox.network] table.
 type File struct {
-	Model         string `toml:"model"`
-	MaxIterations int    `toml:"max_iterations"`
+	Model         string      `toml:"model"`
+	MaxIterations int         `toml:"max_iterations"`
+	Sandbox       SandboxFile `toml:"sandbox"`
+}
+
+// SandboxFile is the [sandbox] table.
+type SandboxFile struct {
+	Network string    `toml:"network"`
+	Hosts   HostsFile `toml:"hosts"`
+}
+
+// HostsFile is the allow and deny hostname lists.
+type HostsFile struct {
+	Allow []string `toml:"allow"`
+	Deny  []string `toml:"deny"`
 }
 
 // Config is the process configuration for one gopi run.
@@ -36,6 +52,9 @@ type Config struct {
 	OpenAIAPIKey  string
 	HomeDir       string
 	Secrets       map[string]string
+	Network       string
+	AllowHosts    []string
+	DenyHosts     []string
 }
 
 type envSecrets struct {
@@ -91,6 +110,9 @@ func Load(dir string, builtinPrompt string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if file.Sandbox.Network == "" {
+		file.Sandbox.Network = "deny"
+	}
 	if file.Model == "" {
 		file.Model = defaultModel
 	}
@@ -127,6 +149,9 @@ func Load(dir string, builtinPrompt string) (Config, error) {
 		OpenAIAPIKey:  apiKey,
 		HomeDir:       dir,
 		Secrets:       broker,
+		Network:       file.Sandbox.Network,
+		AllowHosts:    file.Sandbox.Hosts.Allow,
+		DenyHosts:     file.Sandbox.Hosts.Deny,
 	}, nil
 }
 
@@ -147,8 +172,26 @@ func loadOrCreateFile(path string) (File, error) {
 		return file, nil
 	}
 
-	if _, err := toml.DecodeFile(path, &file); err != nil {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return File{}, fmt.Errorf("read config: %w", err)
+	}
+	return decodeFile(body)
+}
+
+func decodeFile(body []byte) (File, error) {
+	text := strings.ReplaceAll(string(body), "[sandbox.network]", "[sandbox.hosts]")
+	var file File
+	if err := toml.Unmarshal([]byte(text), &file); err != nil {
 		return File{}, fmt.Errorf("decode config: %w", err)
+	}
+	if file.Sandbox.Network == "" {
+		file.Sandbox.Network = "deny"
+	}
+	switch file.Sandbox.Network {
+	case "deny", "allowlist":
+	default:
+		return File{}, fmt.Errorf("sandbox network %q is not available; use deny or allowlist", file.Sandbox.Network)
 	}
 	return file, nil
 }

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 )
 
@@ -15,6 +16,23 @@ func ScrubbedEnv(tmpdir string) []string {
 		"LANG=C",
 		"LC_ALL=C",
 	}
+}
+
+// WithProxyEnv points HTTP clients at the loopback proxies and clears NO_PROXY.
+func WithProxyEnv(env []string, httpPort, socksPort int) []string {
+	httpURL := fmt.Sprintf("http://127.0.0.1:%d", httpPort)
+	socksURL := fmt.Sprintf("socks5://127.0.0.1:%d", socksPort)
+	env = append(env,
+		"HTTP_PROXY="+httpURL,
+		"HTTPS_PROXY="+httpURL,
+		"http_proxy="+httpURL,
+		"https_proxy="+httpURL,
+		"ALL_PROXY="+socksURL,
+		"all_proxy="+socksURL,
+		"NO_PROXY=",
+		"no_proxy=",
+	)
+	return env
 }
 
 // SessionTemp creates a private temp directory for one command.

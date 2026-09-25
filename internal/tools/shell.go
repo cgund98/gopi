@@ -17,23 +17,28 @@ import (
 )
 
 type shellArgs struct {
-	Command    string   `json:"command" jsonschema:"description=Shell command to run inside the sandbox"`
-	Cwd        string   `json:"cwd,omitempty" jsonschema:"description=Working directory relative to the workspace"`
-	Profile    string   `json:"profile,omitempty" jsonschema:"description=sandbox, or extra_paths when read_paths or write_paths is set"`
-	ReadPaths  []string `json:"read_paths,omitempty" jsonschema:"description=Extra files or directories to read. The user must approve the call."`
-	WritePaths []string `json:"write_paths,omitempty" jsonschema:"description=Extra files or directories to write. The user must approve the call."`
+	Command      string   `json:"command" jsonschema:"description=Shell command to run inside the sandbox"`
+	Cwd          string   `json:"cwd,omitempty" jsonschema:"description=Working directory relative to the workspace"`
+	Profile      string   `json:"profile,omitempty" jsonschema:"description=sandbox, or extra_paths when read_paths or write_paths is set"`
+	ReadPaths    []string `json:"read_paths,omitempty" jsonschema:"description=Extra files or directories to read. The user must approve the call."`
+	WritePaths   []string `json:"write_paths,omitempty" jsonschema:"description=Extra files or directories to write. The user must approve the call."`
+	NetworkHosts []string `json:"network_hosts,omitempty" jsonschema:"description=Extra hosts this command may reach through the proxy. The user must approve the call."`
+	Network      string   `json:"network,omitempty" jsonschema:"description=Set to unrestricted to allow outbound network. The user must approve the call."`
 }
 
 // Shell runs a command under the default macOS sandbox profile.
 type Shell struct {
-	Root    workspace.Root
-	HomeDir string
+	Root       workspace.Root
+	HomeDir    string
+	Network    string
+	AllowHosts []string
+	DenyHosts  []string
 }
 
 func (t *Shell) Name() string { return "shell" }
 
 func (t *Shell) Description() string {
-	return "Run a command in the workspace sandbox. Network is denied. If the result says the sandbox blocked a file, call shell again with the same command and set read_paths or write_paths to the blocked path. That call asks the user for approval and does not run until they approve."
+	return "Run a command in the workspace sandbox. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Those calls ask the user for approval and do not run until they approve."
 }
 
 func (t *Shell) Parameters() json.RawMessage { return schemaFor(new(shellArgs)) }
@@ -43,14 +48,26 @@ func (t *Shell) RequiresApproval(_ context.Context, raw json.RawMessage) (gogent
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return gogent.ApprovalDecision{}, fmt.Errorf("parse arguments: %w", err)
 	}
-	if len(args.ReadPaths) == 0 && len(args.WritePaths) == 0 {
+	if len(args.ReadPaths) == 0 && len(args.WritePaths) == 0 && len(args.NetworkHosts) == 0 && args.Network == "" {
 		return gogent.ApprovalDecision{}, nil
 	}
-	reads, writes, err := t.canonicalGrants(args)
-	if err != nil {
+	var reasons []string
+	if len(args.ReadPaths) > 0 || len(args.WritePaths) > 0 {
+		reads, writes, err := t.canonicalGrants(args)
+		if err != nil {
+			return gogent.ApprovalDecision{}, nil
+		}
+		reasons = append(reasons, grantReason(reads, writes))
+	}
+	if args.Network == sandbox.NetworkUnrestricted {
+		reasons = append(reasons, "Network: deny -> unrestricted")
+	} else if len(args.NetworkHosts) > 0 {
+		reasons = append(reasons, "Network: "+strings.Join(args.NetworkHosts, ", "))
+	}
+	if len(reasons) == 0 {
 		return gogent.ApprovalDecision{}, nil
 	}
-	return gogent.ApprovalDecision{Required: true, Reason: grantReason(reads, writes)}, nil
+	return gogent.ApprovalDecision{Required: true, Reason: strings.Join(reasons, "; ")}, nil
 }
 
 func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -70,6 +87,10 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	if args.Profile == "extra_paths" && len(args.ReadPaths) == 0 && len(args.WritePaths) == 0 {
 		t.audit(command, args.Cwd, sandbox.ProfileSandbox, "denied", -1, time.Since(started))
 		return accessDenied(args.Profile, "name read_paths or write_paths"), nil
+	}
+	if args.Network != "" && args.Network != sandbox.NetworkUnrestricted {
+		t.audit(command, args.Cwd, sandbox.ProfileSandbox, "denied", -1, time.Since(started))
+		return accessDenied(args.Network, "network must be unrestricted"), nil
 	}
 	reads, writes, err := t.canonicalGrants(args)
 	if err != nil {
@@ -101,6 +122,24 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
+	env := sandbox.ScrubbedEnv(tmp)
+	network := sandbox.NetworkDeny
+	var ports []int
+	if args.Network == sandbox.NetworkUnrestricted {
+		network = sandbox.NetworkUnrestricted
+	} else if t.Network == sandbox.NetworkAllowlist || len(args.NetworkHosts) > 0 {
+		proxy, err := sandbox.ListenProxy(policy.NetworkPolicy{
+			Allow: append(append([]string{}, t.AllowHosts...), args.NetworkHosts...),
+			Deny:  t.DenyHosts,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("start network proxy: %w", err)
+		}
+		defer proxy.Close()
+		network = sandbox.NetworkAllowlist
+		ports = []int{proxy.HTTPPort(), proxy.SOCKSPort()}
+		env = sandbox.WithProxyEnv(env, proxy.HTTPPort(), proxy.SOCKSPort())
+	}
 	profile := sandbox.Profile{
 		Name:        sandbox.ProfileSandbox,
 		ReadRoots:   []string{t.Root.Path},
@@ -110,8 +149,9 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		DenyWrite:   rules.DenyWrite,
 		ExtraReads:  reads,
 		ExtraWrites: writes,
-		Network:     sandbox.NetworkDeny,
-		Env:         sandbox.ScrubbedEnv(tmp),
+		Network:     network,
+		ProxyPorts:  ports,
+		Env:         env,
 		Timeout:     sandbox.DefaultTimeout,
 		OutputLimit: sandbox.DefaultOutputLimit,
 		WorkDir:     cwd,
@@ -133,12 +173,26 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		"stderr":    result.Stderr,
 		"truncated": result.Truncated,
 	}
-	if result.ExitCode != 0 && profileName == sandbox.ProfileSandbox {
-		if hint, paths := fileElevation(result.Stdout, result.Stderr); hint != "" {
-			payload["message"] = hint
-			if len(paths) > 0 {
-				payload["blocked_paths"] = paths
+	if result.ExitCode != 0 {
+		var notes []string
+		if len(reads) == 0 && len(writes) == 0 {
+			if hint, paths := fileElevation(result.Stdout, result.Stderr); hint != "" {
+				notes = append(notes, hint)
+				if len(paths) > 0 {
+					payload["blocked_paths"] = paths
+				}
 			}
+		}
+		if args.Network != sandbox.NetworkUnrestricted && len(args.NetworkHosts) == 0 {
+			if hint, hosts := networkElevation(result.Stdout, result.Stderr); hint != "" {
+				notes = append(notes, hint)
+				if len(hosts) > 0 {
+					payload["blocked_hosts"] = hosts
+				}
+			}
+		}
+		if len(notes) > 0 {
+			payload["message"] = strings.Join(notes, " ")
 		}
 	}
 	return json.Marshal(payload)
@@ -190,6 +244,31 @@ func fileElevation(stdout, stderr string) (string, []string) {
 		return "", nil
 	}
 	return fileElevationHint, paths
+}
+
+const networkElevationHint = "Network is denied. Call shell again with the same command and put each host in network_hosts, or set network to unrestricted. That call asks the user for approval and does not run until they approve."
+
+var networkHostPattern = regexp.MustCompile(`(?i)\b([a-z0-9-]+(?:\.[a-z0-9-]+)+)\b`)
+
+func networkElevation(stdout, stderr string) (string, []string) {
+	text := stdout + "\n" + stderr
+	lower := strings.ToLower(text)
+	denied := strings.Contains(lower, "could not resolve") || strings.Contains(lower, "network is unreachable") ||
+		((strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "permission denied")) &&
+			(strings.Contains(lower, "connect") || strings.Contains(lower, "socket") || strings.Contains(lower, "network")))
+	if !denied {
+		return "", nil
+	}
+	var hosts []string
+	seen := map[string]bool{}
+	for _, match := range networkHostPattern.FindAllString(lower, -1) {
+		if seen[match] || !strings.Contains(match, ".") {
+			continue
+		}
+		seen[match] = true
+		hosts = append(hosts, match)
+	}
+	return networkElevationHint, hosts
 }
 
 func grantReason(reads, writes []string) string {
