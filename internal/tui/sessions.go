@@ -14,12 +14,18 @@ import (
 )
 
 const helpText = `/agent, /ask, /plan, and /mode <name> switch the session mode
+/model <name> sets the model for the active mode
+/compact summarizes earlier turns
+/mouse [on|off] toggles mouse capture for text selection
 /sessions opens the saved-chat list
+/plans opens saved plans
+/review walks file edits from this chat
 /help shows this list`
 
 type sessionSavedMsg struct {
-	Title string
-	Err   error
+	Title  string
+	Review []session.ReviewEntry
+	Err    error
 }
 
 type sessionProgressMsg struct {
@@ -46,27 +52,43 @@ func (m *chatModel) persistSession() tea.Cmd {
 	sessions := m.sessions
 	titleFn := m.chatTitle
 	ctx := m.ctx
+	models := m.modelOverrides
+	var grants []string
+	haveGrants := m.readGrants != nil
+	if haveGrants {
+		grants = m.readGrants.List()
+	}
 	return func() tea.Msg {
 		messages, err := store.Load(ctx, id)
 		if err != nil || len(messages) == 0 {
 			return nil
 		}
 		title := ""
+		var review []session.ReviewEntry
+		var savedGrants []string
 		if existing, err := sessions.Load(id); err == nil {
 			title = existing.Title
+			review = existing.Review
+			savedGrants = existing.ReadGrants
 		}
 		if title == "" {
 			title = generateTitle(ctx, titleFn, messages)
 		}
+		if !haveGrants {
+			grants = savedGrants
+		}
 		err = sessions.Save(session.File{
-			ID:        id,
-			Title:     title,
-			Workspace: workspace,
-			Mode:      mode,
-			Updated:   time.Now().UTC(),
-			Messages:  messages,
+			ID:         id,
+			Title:      title,
+			Workspace:  workspace,
+			Mode:       mode,
+			Updated:    time.Now().UTC(),
+			Messages:   messages,
+			Review:     review,
+			Models:     models,
+			ReadGrants: grants,
 		})
-		return sessionSavedMsg{Title: title, Err: err}
+		return sessionSavedMsg{Title: title, Review: review, Err: err}
 	}
 }
 
@@ -118,6 +140,7 @@ func fallbackTitle(messages []gogent.Message) string {
 func (m *chatModel) openSessions() tea.Cmd {
 	m.sessionsOpen = true
 	m.sessionCursor = 0
+	m.sessionScroll = 0
 	m.sessionsHome = m.workspacePath
 	m.sessionErr = ""
 	m.sessionConfirm = false
@@ -220,22 +243,40 @@ func (m *chatModel) chooseSession() tea.Cmd {
 }
 
 func (m *chatModel) renderSessions() string {
+	count := len(m.sessionRows) + 1
+	visible := listCapacity(m.height, listChrome(m.width, m.sessionErr), 2)
+	m.sessionScroll = fitListOffset(m.sessionScroll, m.sessionCursor, count, visible)
+	start, end := 0, count
+	if visible > 0 {
+		start = m.sessionScroll
+		end = start + visible
+		if end > count {
+			end = count
+		}
+	}
+
 	var b strings.Builder
-	b.WriteString(planTitleStyle.Render("Sessions"))
+	b.WriteString(planTitleStyle.Render(fmt.Sprintf("Sessions (%d)", len(m.sessionRows))))
 	b.WriteString("\n\n")
-	b.WriteString(sessionLine(m.sessionCursor == 0, "New session", m.sessionsHome))
-	for i, file := range m.sessionRows {
+	for index := start; index < end; index++ {
+		if index > start {
+			b.WriteByte('\n')
+		}
+		if index == 0 {
+			b.WriteString(sessionLine(m.sessionCursor == 0, "New session", m.sessionsHome))
+			continue
+		}
+		file := m.sessionRows[index-1]
 		title := file.Title
 		if title == "" {
 			title = "Untitled"
 		}
 		when := file.Updated.Local().Format("2006-01-02 15:04")
-		b.WriteString("\n")
-		b.WriteString(sessionLine(m.sessionCursor == i+1, title+"  "+when, file.Workspace))
+		b.WriteString(sessionLine(m.sessionCursor == index, title+"  "+when, file.Workspace))
 	}
 	if m.sessionErr != "" {
 		b.WriteString("\n\n")
-		b.WriteString(errStyle.Render(m.sessionErr))
+		b.WriteString(wrapStyled(m.sessionErr, errStyle, m.width))
 	}
 	b.WriteString("\n\n")
 	if m.sessionConfirm && m.sessionCursor > 0 && m.sessionCursor-1 < len(m.sessionRows) {
@@ -250,10 +291,57 @@ func (m *chatModel) renderSessions() string {
 	return b.String()
 }
 
-func sessionLine(selected bool, title, detail string) string {
-	line := fmt.Sprintf("%s\n  %s", title, detail)
-	if selected {
-		return agentModeStyle.Render(line)
+// listChrome is the title, the gap under it, the gap above the help line, and the help line.
+// An error adds one blank line plus its wrapped height.
+func listChrome(width int, errText string) int {
+	chrome := 4
+	if strings.TrimSpace(errText) == "" {
+		return chrome
 	}
-	return line
+	return chrome + 1 + len(strings.Split(wrapBlock(errText, width), "\n"))
+}
+
+// listCapacity is how many items fit. Zero means the height is unknown, so the caller shows every row.
+func listCapacity(height, chrome, itemLines int) int {
+	if height <= 0 || itemLines < 1 {
+		return 0
+	}
+	room := height - chrome
+	if room < itemLines {
+		return 1
+	}
+	return room / itemLines
+}
+
+// fitListOffset moves the window just enough to keep the cursor on screen.
+func fitListOffset(offset, cursor, count, visible int) int {
+	if count <= 0 || visible <= 0 || visible >= count {
+		return 0
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= count {
+		cursor = count - 1
+	}
+	if offset > cursor {
+		offset = cursor
+	}
+	if offset+visible <= cursor {
+		offset = cursor - visible + 1
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if maxOffset := count - visible; offset > maxOffset {
+		offset = maxOffset
+	}
+	return offset
+}
+
+func sessionLine(selected bool, title, detail string) string {
+	if selected {
+		title = agentModeStyle.Render(title)
+	}
+	return title + "\n" + statusStyle.Render("  "+detail)
 }

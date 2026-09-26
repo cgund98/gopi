@@ -9,9 +9,23 @@ import (
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/cgund98/gopi/internal/app"
+	"github.com/cgund98/gopi/internal/tools"
 )
 
-const planViewHelp = "esc or q back to chat"
+const planViewHelp = "b build · esc or q back to chat"
+
+func (m *chatModel) seedSeenPlans(messages []gogent.Message) {
+	if m.seenPlans == nil {
+		m.seenPlans = map[string]bool{}
+	}
+	for _, message := range messages {
+		if message.Role == gogent.MessageRoleTool && message.ToolCallID != "" {
+			m.seenPlans[message.ToolCallID] = true
+		}
+	}
+}
 
 func (m *chatModel) noticeWrittenPlans() {
 	if m.seenPlans == nil {
@@ -33,7 +47,9 @@ func (m *chatModel) noticeWrittenPlans() {
 		if err := json.Unmarshal([]byte(message.Content), &payload); err != nil || payload.Error != "" || payload.Path == "" {
 			continue
 		}
-		m.openPlan(payload.Path)
+		if m.mode == app.ModePlan {
+			m.openPlan(payload.Path)
+		}
 	}
 }
 
@@ -71,8 +87,17 @@ func (m *chatModel) renderPlan() {
 	}
 	m.planVP.Height = height
 	title := planTitleStyle.Render(m.planPath)
-	body := renderMarkdown(m.planBody, width)
-	m.planVP.SetContent(title + "\n\n" + body)
+	todos, prose, err := tools.SplitPlan(m.planBody)
+	if err != nil {
+		prose = m.planBody
+		todos = nil
+	}
+	body := renderMarkdown(prose, width)
+	content := title + "\n\n" + body
+	if checklist := renderPlanTodos(todos, width); checklist != "" {
+		content = title + "\n\n" + checklist + "\n\n" + body
+	}
+	m.planVP.SetContent(content)
 }
 
 func (m *chatModel) closePlan() {
@@ -91,10 +116,13 @@ func (m *chatModel) handlePlanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.closePlan()
 		return m, nil
-	case "up", "down", "pgup", "pgdown", "home", "end":
-		var cmd tea.Cmd
-		m.planVP, cmd = m.planVP.Update(msg)
-		return m, cmd
+	case "b":
+		if m.busy || m.inApprovalMode() {
+			return m, nil
+		}
+		return m, m.buildPlan()
+	case "up", "down", "pgup", "pgdown", "home", "end", "shift+up", "shift+down":
+		return m, scrollViewport(&m.planVP, msg)
 	default:
 		return m, nil
 	}

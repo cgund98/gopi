@@ -10,6 +10,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
 
+	"github.com/cgund98/gopi/internal/models"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
@@ -17,7 +18,7 @@ const (
 	dirName          = ".gopi"
 	configFileName   = "config.toml"
 	systemPromptFile = "system.md"
-	defaultModel     = "gpt-4o-mini"
+	defaultModel     = "gpt-5.6-terra"
 	defaultMaxIter   = 10
 	homeDirEnv       = "GOPI_HOME"
 	requiredDirMode  = os.FileMode(0o700)
@@ -28,10 +29,19 @@ const (
 // cannot store both network = "deny" and a [sandbox.network] table.
 type File struct {
 	Model         string           `toml:"model"`
+	Models        ModelsFile       `toml:"models"`
 	MaxIterations int              `toml:"max_iterations"`
 	Sandbox       SandboxFile      `toml:"sandbox"`
 	Instructions  InstructionsFile `toml:"instructions"`
 	Search        SearchFile       `toml:"search"`
+}
+
+// ModelsFile is the optional [models] table. Empty keys fall back to model.
+type ModelsFile struct {
+	Agent string `toml:"agent"`
+	Ask   string `toml:"ask"`
+	Plan  string `toml:"plan"`
+	Build string `toml:"build"`
 }
 
 // SandboxFile is the [sandbox] table.
@@ -59,11 +69,18 @@ type SearchFile struct {
 // Config is the process configuration for one gopi run.
 type Config struct {
 	Model              string
+	AgentModel         string
+	AskModel           string
+	PlanModel          string
+	BuildModel         string
 	MaxIterations      int
 	SystemPrompt       string
 	OpenAIAPIKey       string
+	KimiAPIKey         string
 	HomeDir            string
 	Secrets            map[string]string
+	SecretFiles        map[string]string
+	HostOnly           []string
 	Network            string
 	AllowHosts         []string
 	DenyHosts          []string
@@ -76,6 +93,7 @@ type Config struct {
 
 type envSecrets struct {
 	OpenAIAPIKey string `envconfig:"OPENAI_API_KEY"`
+	KimiAPIKey   string `envconfig:"KIMI_API_KEY"`
 }
 
 // HomeDir returns the gopi configuration directory.
@@ -153,13 +171,24 @@ func Load(dir string) (Config, error) {
 		return Config{}, err
 	}
 
-	broker, err := gopisecrets.Load(dir)
+	broker, secretFiles, err := gopisecrets.Load(dir)
 	if err != nil {
 		return Config{}, err
 	}
 	apiKey := secrets.OpenAIAPIKey
-	if broker["openai_api_key"] != "" {
-		apiKey = broker["openai_api_key"]
+	if broker[gopisecrets.OpenAIAPIKey] != "" {
+		apiKey = broker[gopisecrets.OpenAIAPIKey]
+	}
+	kimiKey := secrets.KimiAPIKey
+	if broker[gopisecrets.KimiAPIKey] != "" {
+		kimiKey = broker[gopisecrets.KimiAPIKey]
+	}
+	resolved, err := resolveModels(file)
+	if err != nil {
+		return Config{}, err
+	}
+	if err := requireKeys(resolved, apiKey, kimiKey); err != nil {
+		return Config{}, err
 	}
 	endpoint := strings.TrimSpace(file.Search.Endpoint)
 	if endpoint == "" {
@@ -167,12 +196,18 @@ func Load(dir string) (Config, error) {
 	}
 
 	return Config{
-		Model:              file.Model,
+		Model:              resolved.fallback,
+		AgentModel:         resolved.agent,
+		AskModel:           resolved.ask,
+		PlanModel:          resolved.plan,
+		BuildModel:         resolved.build,
 		MaxIterations:      file.MaxIterations,
 		SystemPrompt:       "",
 		OpenAIAPIKey:       apiKey,
+		KimiAPIKey:         kimiKey,
 		HomeDir:            dir,
 		Secrets:            broker,
+		SecretFiles:        secretFiles,
 		Network:            file.Sandbox.Network,
 		AllowHosts:         file.Sandbox.Hosts.Allow,
 		DenyHosts:          file.Sandbox.Hosts.Deny,
@@ -223,6 +258,110 @@ func decodeFile(body []byte) (File, error) {
 		return File{}, fmt.Errorf("sandbox network %q is not available; use deny or allowlist", file.Sandbox.Network)
 	}
 	return file, nil
+}
+
+type resolvedModels struct {
+	fallback string
+	agent    string
+	ask      string
+	plan     string
+	build    string
+}
+
+func resolveModels(file File) (resolvedModels, error) {
+	fallback := strings.TrimSpace(file.Model)
+	if fallback == "" {
+		fallback = defaultModel
+	}
+	if _, _, err := models.Parse(fallback); err != nil {
+		return resolvedModels{}, err
+	}
+	agent, err := pickModel(file.Models.Agent, fallback)
+	if err != nil {
+		return resolvedModels{}, err
+	}
+	ask, err := pickModel(file.Models.Ask, fallback)
+	if err != nil {
+		return resolvedModels{}, err
+	}
+	plan, err := pickModel(file.Models.Plan, fallback)
+	if err != nil {
+		return resolvedModels{}, err
+	}
+	build := ""
+	if strings.TrimSpace(file.Models.Build) != "" {
+		build, err = pickModel(file.Models.Build, fallback)
+		if err != nil {
+			return resolvedModels{}, err
+		}
+	}
+	return resolvedModels{fallback: fallback, agent: agent, ask: ask, plan: plan, build: build}, nil
+}
+
+func pickModel(override, fallback string) (string, error) {
+	name := strings.TrimSpace(override)
+	if name == "" {
+		name = fallback
+	}
+	if _, _, err := models.Parse(name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func requireKeys(resolved resolvedModels, openaiKey, kimiKey string) error {
+	names := []string{resolved.fallback, resolved.agent, resolved.ask, resolved.plan, resolved.build}
+	var needOpenAI, needKimi bool
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		provider, _, err := models.Parse(name)
+		if err != nil {
+			return err
+		}
+		switch provider {
+		case models.ProviderOpenAI:
+			needOpenAI = true
+		case models.ProviderKimi:
+			needKimi = true
+		}
+	}
+	if needOpenAI && openaiKey == "" {
+		return fmt.Errorf("OPENAI_API_KEY is required")
+	}
+	if needKimi && kimiKey == "" {
+		return fmt.Errorf("%s is required", gopisecrets.KimiAPIKey)
+	}
+	return nil
+}
+
+// ModelFor returns the resolved model for agent, ask, or plan.
+func (c Config) ModelFor(mode string) string {
+	var override string
+	switch mode {
+	case "agent":
+		override = c.AgentModel
+	case "ask":
+		override = c.AskModel
+	case "plan":
+		override = c.PlanModel
+	}
+	if override != "" {
+		return override
+	}
+	if c.Model != "" {
+		return c.Model
+	}
+	return defaultModel
+}
+
+// BuildModelName returns the model used by the plan build key.
+func (c Config) BuildModelName() string {
+	if c.BuildModel != "" {
+		return c.BuildModel
+	}
+	return c.ModelFor("agent")
 }
 
 func loadSecrets() (envSecrets, error) {

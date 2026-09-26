@@ -17,21 +17,22 @@ const (
 // Profile is the host-computed sandbox for one command.
 // The child cannot widen it.
 type Profile struct {
-	Name        string
-	Home        string
-	ReadRoots   []string
-	WriteRoots  []string
-	DenyRead    []string
-	DenyWrite   []string
-	ExtraReads  []string
-	ExtraWrites []string
-	Network     string
-	ProxyPorts  []int
-	Env         []string
-	Timeout     time.Duration
-	OutputLimit int
-	WorkDir     string
-	Argv        []string
+	Name         string
+	Home         string
+	ReadRoots    []string
+	WriteRoots   []string
+	DenyRead     []string
+	DenyWrite    []string
+	SessionReads []string
+	ExtraReads   []string
+	ExtraWrites  []string
+	Network      string
+	ProxyPorts   []int
+	Env          []string
+	Timeout      time.Duration
+	OutputLimit  int
+	WorkDir      string
+	Argv         []string
 }
 
 // Result is the capped output of one sandboxed command.

@@ -3,19 +3,20 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/cgund98/gogent"
 	"github.com/cgund98/gogent/inmemory"
 	"github.com/cgund98/gogent/openai"
-	openaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
 
 	"github.com/cgund98/gopi/internal/config"
+	"github.com/cgund98/gopi/internal/models"
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/prompt"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/tools"
+	"github.com/cgund98/gopi/internal/toolview"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
 )
@@ -41,11 +42,21 @@ type Session struct {
 	Config    config.Config
 	Edit      *tools.EditFile
 	WritePlan *tools.WritePlan
+	Tasks     *tools.TaskList
+	Grants    *tools.ReadGrants
 	Mode      Mode
+	// Subagent reports a running delegate call.
+	Subagent *tools.DelegateProgress
+	// Renderers holds custom tools that implement toolview.Renderer, by name, across all modes.
+	Renderers map[string]toolview.Renderer
+	// Redact removes secret values from text shown in the UI.
+	Redact func(string) string
 
 	registries map[Mode]*gogent.ToolRegistry
 	extra      map[Mode][]gogent.Tool
-	client     openaisdk.Client
+	models     *modelFactory
+	overrides  map[Mode]string
+	active     string
 	basePrompt string
 }
 
@@ -53,60 +64,71 @@ type Session struct {
 // extra adds tools to a mode. A name that matches a built-in tool is an error.
 // Extra tools are not registered on the delegate child.
 func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace, extra map[Mode][]gogent.Tool) (*Session, error) {
-	if cfg.OpenAIAPIKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY is required")
+	secretFiles := make([]string, 0, len(cfg.SecretFiles))
+	for _, path := range cfg.SecretFiles {
+		secretFiles = append(secretFiles, path)
 	}
-
-	rules, err := policy.Build(root.Path, cfg.HomeDir, "")
+	sort.Strings(secretFiles)
+	rules, err := policy.Build(root.Path, cfg.HomeDir, "", secretFiles...)
 	if err != nil {
 		return nil, fmt.Errorf("build path policy: %w", err)
 	}
 	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust, Rules: rules}
 	plan := &tools.WritePlan{Root: root, Workspace: workspaceTrust}
+	grants := &tools.ReadGrants{}
 	read := []gogent.Tool{
-		&tools.ReadFile{Root: root, Rules: rules},
-		&tools.Grep{Root: root, Rules: rules},
-		&tools.Find{Root: root, Rules: rules},
+		&tools.ReadFile{Root: root, Rules: rules, Grants: grants},
+		&tools.Grep{Root: root, Rules: rules, Grants: grants},
+		&tools.Find{Root: root, Rules: rules, Grants: grants},
+		&tools.GrantRead{Root: root, Grants: grants},
 	}
-	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets}
-	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets["search_api_key"]}
+	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets, Grants: grants, SecretFiles: secretFiles, HostOnly: cfg.HostOnly}
+	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets[gopisecrets.SearchAPIKey]}
+	fetch := &tools.WebFetch{}
+	taskList := tools.NewTaskList(root)
+	tasks := &tools.Tasks{List: taskList}
 	redact := gopisecrets.NewRedactor(cfg.Secrets).Apply
 
 	text, err := prompt.Assemble(promptOptions(cfg, root.Path, workspaceTrust))
 	if err != nil {
 		return nil, fmt.Errorf("assemble prompt: %w", err)
 	}
-	client := openaisdk.NewClient(option.WithAPIKey(cfg.OpenAIAPIKey))
 	session := &Session{
 		Root:       root,
 		Workspace:  workspaceTrust,
 		Config:     cfg,
 		Edit:       edit,
 		WritePlan:  plan,
+		Tasks:      taskList,
+		Grants:     grants,
 		Mode:       ModeAgent,
+		Subagent:   &tools.DelegateProgress{},
+		Renderers:  collectRenderers(extra),
+		Redact:     redact,
 		registries: map[Mode]*gogent.ToolRegistry{},
 		extra:      extra,
-		client:     client,
+		models:     newModelFactory(cfg),
+		overrides:  map[Mode]string{},
 		basePrompt: text,
 	}
 	delegate := &tools.Delegate{
-		Root:       root,
-		Rules:      rules,
-		HomeDir:    cfg.HomeDir,
-		Network:    cfg.Network,
-		AllowHosts: cfg.AllowHosts,
-		DenyHosts:  cfg.DenyHosts,
-		Redact:     redact,
+		Root:        root,
+		Rules:       rules,
+		HomeDir:     cfg.HomeDir,
+		Network:     cfg.Network,
+		AllowHosts:  cfg.AllowHosts,
+		DenyHosts:   cfg.DenyHosts,
+		SecretFiles: secretFiles,
+		Redact:      redact,
+		Grants:      grants,
+		Progress:    session.Subagent,
 		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
-			return openai.NewChat(&session.client, registry).
-				WithModel(cfg.Model).
-				WithSystemPrompt(session.basePrompt).
-				Build()
+			return session.models.New(session.active, registry, session.basePrompt)
 		},
 	}
-	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search)
-	askTools := append(append([]gogent.Tool{}, read...), search)
-	planTools := append(append([]gogent.Tool{}, read...), plan, search)
+	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch, tasks, &tools.UpdatePlan{Inner: plan})
+	askTools := append(append([]gogent.Tool{}, read...), search, fetch)
+	planTools := append(append([]gogent.Tool{}, read...), plan, search, fetch)
 	agentTools = append(agentTools, extra[ModeAgent]...)
 	askTools = append(askTools, extra[ModeAsk]...)
 	planTools = append(planTools, extra[ModePlan]...)
@@ -137,6 +159,19 @@ func (s *Session) ExtraTools() map[Mode][]gogent.Tool {
 	return s.extra
 }
 
+// collectRenderers must run on the unwrapped tools: WrapRedacting hides the interface.
+func collectRenderers(extra map[Mode][]gogent.Tool) map[string]toolview.Renderer {
+	out := map[string]toolview.Renderer{}
+	for _, list := range extra {
+		for _, tool := range list {
+			if renderer, ok := tool.(toolview.Renderer); ok {
+				out[tool.Name()] = renderer
+			}
+		}
+	}
+	return out
+}
+
 func registerTools(list []gogent.Tool, redact func(string) string) (*gogent.ToolRegistry, error) {
 	registry := gogent.NewToolRegistry()
 	for _, tool := range list {
@@ -147,18 +182,76 @@ func registerTools(list []gogent.Tool, redact func(string) string) (*gogent.Tool
 	return registry, nil
 }
 
-// SetMode switches the registry and prompt prefix. The transcript stays on the same store.
+// ActiveModel is the model name of the current turn.
+func (s *Session) ActiveModel() string {
+	return s.active
+}
+
+// ModelOverrides returns the per-mode names chosen with /model.
+func (s *Session) ModelOverrides() map[string]string {
+	if len(s.overrides) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(s.overrides))
+	for mode, name := range s.overrides {
+		out[string(mode)] = name
+	}
+	return out
+}
+
+// SetModelOverrides restores names chosen in an earlier session.
+// A name no longer in the catalog is dropped so the mode falls back to config.
+func (s *Session) SetModelOverrides(overrides map[string]string) {
+	s.overrides = map[Mode]string{}
+	for mode, name := range overrides {
+		if _, _, err := models.Parse(name); err != nil {
+			continue
+		}
+		s.overrides[Mode(mode)] = name
+	}
+}
+
+// SetMode switches the registry, prompt prefix, and that mode's model.
 func (s *Session) SetMode(mode Mode) error {
 	switch mode {
 	case ModeAgent, ModeAsk, ModePlan:
 	default:
 		return fmt.Errorf("unknown mode %q", mode)
 	}
+	return s.apply(mode, s.modelFor(mode))
+}
+
+// SetModel sets the model used by the active mode for the rest of this session.
+func (s *Session) SetModel(name string) error {
+	if _, _, err := models.Parse(name); err != nil {
+		return err
+	}
+	if s.overrides == nil {
+		s.overrides = map[Mode]string{}
+	}
+	s.overrides[s.Mode] = name
+	return s.apply(s.Mode, name)
+}
+
+// SetBuild selects the agent registry and the build model for one plan turn.
+func (s *Session) SetBuild() error {
+	name := s.Config.BuildModel
+	if name == "" {
+		name = s.modelFor(ModeAgent)
+	}
+	return s.apply(ModeAgent, name)
+}
+
+func (s *Session) modelFor(mode Mode) string {
+	if name := s.overrides[mode]; name != "" {
+		return name
+	}
+	return s.Config.ModelFor(string(mode))
+}
+
+func (s *Session) apply(mode Mode, name string) error {
 	registry := s.registries[mode]
-	model, err := openai.NewChat(&s.client, registry).
-		WithModel(s.Config.Model).
-		WithSystemPrompt(prompt.WithMode(s.basePrompt, string(mode))).
-		Build()
+	model, err := s.models.New(name, registry, prompt.WithMode(s.basePrompt, string(mode)))
 	if err != nil {
 		return fmt.Errorf("build model: %w", err)
 	}
@@ -169,6 +262,7 @@ func (s *Session) SetMode(mode Mode) error {
 		s.Events = gogent.NewChannelBroadcaster()
 	}
 	s.Mode = mode
+	s.active = name
 	s.Registry = registry
 	s.Model = model
 	s.Agent = gogent.NewAgent(s.Store, s.Events, model, registry, s.Config.MaxIterations)
@@ -177,10 +271,7 @@ func (s *Session) SetMode(mode Mode) error {
 
 // ChatTitle asks the model for a short title and sends no tools.
 func (s *Session) ChatTitle(ctx context.Context, userText, assistantText string) (string, error) {
-	model, err := openai.NewChat(&s.client, gogent.NewToolRegistry()).
-		WithModel(s.Config.Model).
-		WithSystemPrompt("Reply with a short chat title of at most 6 words and nothing else.").
-		Build()
+	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Reply with a short chat title of at most 6 words and nothing else.")
 	if err != nil {
 		return "", err
 	}
@@ -191,6 +282,22 @@ func (s *Session) ChatTitle(ctx context.Context, userText, assistantText string)
 		return "", err
 	}
 	return strings.TrimSpace(message.Content), nil
+}
+
+// Summarize asks the active model for a summary of earlier turns. The reply carries that turn's usage.
+func (s *Session) Summarize(ctx context.Context, transcript string) (gogent.Message, error) {
+	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Summarize the earlier conversation. Keep decisions, file paths, and unfinished work. Reply with the summary only.")
+	if err != nil {
+		return gogent.Message{}, err
+	}
+	message, err := model.GenerateResponse(ctx, []gogent.Message{
+		gogent.NewUserMessage(transcript),
+	})
+	if err != nil {
+		return gogent.Message{}, err
+	}
+	message.Content = "Summary of earlier turns:\n" + strings.TrimSpace(message.Content)
+	return message, nil
 }
 
 // ParseModeCommand reports whether text is a mode command and which mode it names.

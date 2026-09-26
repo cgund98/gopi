@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/cgund98/gogent"
+
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 const (
@@ -52,7 +54,7 @@ func (t *WebSearch) Execute(ctx context.Context, raw json.RawMessage) (json.RawM
 		return nil, fmt.Errorf("query is required")
 	}
 	if strings.TrimSpace(t.APIKey) == "" {
-		return nil, fmt.Errorf("search_api_key is missing from ~/.gopi/secrets.toml")
+		return nil, fmt.Errorf("%s is missing from ~/.gopi/secrets.toml", gopisecrets.SearchAPIKey)
 	}
 	endpoint := strings.TrimSpace(t.Endpoint)
 	if endpoint == "" {

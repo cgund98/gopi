@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -21,7 +23,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Model != "gpt-4o-mini" {
+	if cfg.Model != "gpt-5.6-terra" {
 		t.Fatalf("model = %q", cfg.Model)
 	}
 	if cfg.MaxIterations != 10 {
@@ -45,6 +47,7 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadSystemPromptFile(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -62,6 +65,7 @@ func TestLoadSystemPromptFile(t *testing.T) {
 }
 
 func TestLoadNetworkAllowlist(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -102,5 +106,66 @@ func TestEnsureHomeRefusesLoosePermissions(t *testing.T) {
 	}
 	if err := EnsureHome(loose); err == nil {
 		t.Fatal("expected permission error")
+	}
+}
+
+func TestLoadModeModels(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai")
+	t.Setenv("KIMI_API_KEY", "")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+model = "gpt-5.6-luna"
+
+[models]
+agent = "gpt-4o"
+build = "kimi/kimi-k2.6"
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets.toml"), []byte(gopisecrets.KimiAPIKey+" = \"kimi\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelFor("agent") != "gpt-4o" || cfg.ModelFor("ask") != "gpt-5.6-luna" || cfg.BuildModelName() != "kimi/kimi-k2.6" {
+		t.Fatalf("models = %+v", cfg)
+	}
+	if cfg.KimiAPIKey != "kimi" {
+		t.Fatalf("kimi key = %q", cfg.KimiAPIKey)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model = \"gpt-9\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected unsupported model to fail")
+	}
+}
+
+func TestLoadKimiOnlySkipsOpenAIKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("model = \"kimi/kimi-k2.6\"\n")
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets.toml"), []byte(gopisecrets.KimiAPIKey+" = \"kimi\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OpenAIAPIKey != "" || cfg.Model != "kimi/kimi-k2.6" {
+		t.Fatalf("cfg model %q key %q", cfg.Model, cfg.OpenAIAPIKey)
 	}
 }

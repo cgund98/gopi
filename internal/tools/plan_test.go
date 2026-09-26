@@ -55,6 +55,44 @@ func TestWritePlanCreatesAndUpdates(t *testing.T) {
 	}
 }
 
+func TestUpdatePlanRequiresExistingFile(t *testing.T) {
+	root := openTemp(t)
+	writer := &WritePlan{Root: root, Workspace: trust.WorkspaceTrusted}
+	created, err := writer.Execute(context.Background(), json.RawMessage(`{"plan_name":"Ship It","body":"# plan\n"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(created, &payload); err != nil {
+		t.Fatal(err)
+	}
+	tool := &UpdatePlan{Inner: writer}
+	missing, err := tool.Execute(context.Background(), json.RawMessage(`{"body":"# revised\n"}`))
+	if err == nil || missing != nil {
+		t.Fatalf("missing path = %s err = %v", missing, err)
+	}
+	absent, err := tool.Execute(context.Background(), json.RawMessage(`{"path":".gopi/plans/missing.md","body":"# revised\n"}`))
+	if err != nil || !strings.Contains(string(absent), "does not exist") {
+		t.Fatalf("absent = %s err = %v", absent, err)
+	}
+	updated, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"`+payload.Path+`","body":"# revised\n"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), `"status":"updated"`) {
+		t.Fatalf("updated = %s", updated)
+	}
+	body, err := os.ReadFile(filepath.Join(root.Path, filepath.FromSlash(payload.Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "# revised\n" {
+		t.Fatalf("body = %q", body)
+	}
+}
+
 func TestWritePlanUpdatesGitignoreAndRefusesUntrusted(t *testing.T) {
 	root := openTemp(t)
 	if err := os.WriteFile(filepath.Join(root.Path, ".gitignore"), []byte("tmp/\n"), 0o644); err != nil {

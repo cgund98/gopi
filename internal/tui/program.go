@@ -12,14 +12,22 @@ import (
 	"github.com/cgund98/gopi/internal/app"
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	sess "github.com/cgund98/gopi/internal/session"
+	"github.com/cgund98/gopi/internal/tools"
 	"github.com/cgund98/gopi/internal/trust"
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
 // Run starts the terminal UI. An unknown workspace asks for trust before the chat.
-func Run(ctx context.Context, session *app.Session, decisions *trust.Store) error {
+func Run(ctx context.Context, session *app.Session, decisions *trust.Store, resume *sess.File) error {
 	model := newProgram(ctx, session, decisions)
-	program := tea.NewProgram(model, tea.WithAltScreen())
+	if resume != nil {
+		if err := model.resume(*resume); err != nil {
+			return err
+		}
+	}
+	enableDisambiguateKeysMode()
+	defer disableDisambiguateKeysMode()
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := program.Run()
 	return err
 }
@@ -73,6 +81,7 @@ func (m *programModel) Init() tea.Cmd {
 }
 
 func (m *programModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	msg = translateKitty(msg)
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = size.Width
 		m.height = size.Height
@@ -109,8 +118,12 @@ func (m *programModel) bindChat(session *app.Session) {
 	m.chat.store = session.Store
 	m.chat.registry = session.Registry
 	m.chat.events = session.Events
-	m.chat.modelName = session.Config.Model
+	m.chat.renderers = safeRenderers(session.Renderers, session.Redact)
+	m.chat.subagent = session.Subagent
+	m.chat.modelName = session.ActiveModel()
+	m.chat.modelOverrides = session.ModelOverrides()
 	m.chat.workspacePath = session.Root.Path
+	m.chat.readGrants = session.Grants
 	m.chat.mode = session.Mode
 	m.chat.input.Prompt = modePrompt(session.Mode)
 	m.chat.switchMode = func(mode app.Mode) error {
@@ -122,12 +135,77 @@ func (m *programModel) bindChat(session *app.Session) {
 		if m.session.Model != nil {
 			m.chat.systemPrompt = m.session.Model.SystemPrompt()
 		}
+		m.chat.modelName = m.session.ActiveModel()
+		m.chat.modelOverrides = m.session.ModelOverrides()
+		return nil
+	}
+	m.chat.setModel = func(name string) error {
+		if err := m.session.SetModel(name); err != nil {
+			return err
+		}
+		m.chat.agent = m.session.Agent
+		m.chat.registry = m.session.Registry
+		if m.session.Model != nil {
+			m.chat.systemPrompt = m.session.Model.SystemPrompt()
+		}
+		m.chat.modelName = m.session.ActiveModel()
+		m.chat.modelOverrides = m.session.ModelOverrides()
+		return nil
+	}
+	m.chat.summarize = m.session.Summarize
+	m.chat.prepareBuild = func() error {
+		if err := m.session.SetBuild(); err != nil {
+			return err
+		}
+		m.chat.agent = m.session.Agent
+		m.chat.registry = m.session.Registry
+		if m.session.Model != nil {
+			m.chat.systemPrompt = m.session.Model.SystemPrompt()
+		}
+		m.chat.modelName = m.session.ActiveModel()
+		m.chat.modelOverrides = m.session.ModelOverrides()
+		m.chat.mode = app.ModeAgent
+		m.chat.input.Prompt = modePrompt(app.ModeAgent)
 		return nil
 	}
 	if session.Model != nil {
 		m.chat.systemPrompt = session.Model.SystemPrompt()
 	}
-	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets)
+	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets, session.Config.HostOnly...)
+	m.chat.tasks = session.Tasks
+	m.chat.taskEpoch = 0
+	m.chat.taskSeed = nil
+	if session.Tasks != nil {
+		session.Tasks.Clear()
+	}
+	m.bindEditReview()
+}
+
+func (m *programModel) bindEditReview() {
+	edit := m.session.Edit
+	if edit == nil {
+		return
+	}
+	edit.OnWrite = func(note tools.EditNote) {
+		if m.chat.sessions == nil || m.chat.chatID == "" {
+			return
+		}
+		_ = m.chat.sessions.NoteEdit(m.chat.chatID, note.Path, note.First, note.Created, note.Before)
+		m.chat.stampReviewHunks(note.Path)
+	}
+	m.chat.forgetEdit = edit.Forget
+}
+
+func (m *programModel) adoptReview(file sess.File) {
+	m.chat.review = file.Review
+	if m.session.Edit == nil {
+		return
+	}
+	paths := make([]string, len(file.Review))
+	for i, entry := range file.Review {
+		paths[i] = entry.Path
+	}
+	m.session.Edit.Seed(paths)
 }
 
 func awaitSession(events <-chan tea.Msg) tea.Cmd {
@@ -163,10 +241,10 @@ func (m *programModel) runLoad(events chan tea.Msg, file *sess.File, width int) 
 	render := func(messages []gogent.Message, registry *gogent.ToolRegistry) string {
 		report("Preparing markdown")
 		prepareMarkdown(width)
-		cards := buildToolCards(messages, registry)
-		return renderTranscriptProgress(messages, cards, -1, width, func(done, total int) {
+		cards := buildToolCards(messages, registry, m.chat.renderers)
+		return renderTranscriptProgress(messages, cards, -1, width, true, func(done, total int) {
 			report(fmt.Sprintf("Rendering message %d of %d", done, total))
-		})
+		}, nil)
 	}
 	if file == nil && m.chat.sessionsHome == m.session.Root.Path {
 		events <- sessionLoadedMsg{Fresh: true, Same: true, Body: helpStyle.Render("Send a message to get started.")}
@@ -222,9 +300,21 @@ func (m *programModel) applyLoaded(msg sessionLoadedMsg) {
 	if msg.Fresh && msg.Same {
 		m.chat.chatID = uuid.New().String()
 		m.chat.sessionTitle = ""
+		m.chat.review = nil
+		if m.session.Edit != nil {
+			m.session.Edit.Reset()
+		}
 		m.chat.messages = nil
 		m.chat.toolCards = nil
 		m.chat.pendingApprovals = nil
+		m.chat.taskEpoch = 0
+		m.chat.taskSeed = nil
+		if m.chat.tasks != nil {
+			m.chat.tasks.Clear()
+		}
+		if m.session.Grants != nil {
+			m.session.Grants.Replace(nil)
+		}
 		m.chat.err = nil
 		m.chat.status = ""
 		m.chat.transcriptVP.SetContent(msg.Body)
@@ -249,12 +339,20 @@ func (m *programModel) applyLoaded(msg sessionLoadedMsg) {
 	if msg.Fresh {
 		m.chat.chatID = uuid.New().String()
 		m.chat.sessionTitle = ""
+		m.chat.review = nil
+		if m.session.Edit != nil {
+			m.session.Edit.Reset()
+		}
 	} else {
 		m.chat.chatID = msg.File.ID
 		m.chat.sessionTitle = msg.File.Title
+		m.adoptReview(msg.File)
 	}
 	m.chat.err = nil
 	m.chat.status = ""
+	if !msg.Fresh {
+		m.chat.seedSeenPlans(msg.File.Messages)
+	}
 	m.chat.afterStoreRefresh()
 	if msg.Body != "" {
 		m.chat.transcriptVP.SetContent(msg.Body)
@@ -283,8 +381,10 @@ func (m *programModel) resume(file sess.File) error {
 	m.bindChat(next)
 	m.chat.chatID = file.ID
 	m.chat.sessionTitle = file.Title
+	m.adoptReview(file)
 	m.chat.err = nil
 	m.chat.status = ""
+	m.chat.seedSeenPlans(file.Messages)
 	m.chat.afterStoreRefresh()
 	if next.Workspace == trust.WorkspaceUnknown {
 		m.phase = phaseTrust
@@ -293,10 +393,11 @@ func (m *programModel) resume(file sess.File) error {
 }
 
 func (m *programModel) resumeHere(file sess.File) error {
-	if file.Mode != "" && app.Mode(file.Mode) != m.session.Mode {
-		if err := m.session.SetMode(app.Mode(file.Mode)); err != nil {
-			return err
-		}
+	if m.session.Grants != nil {
+		m.session.Grants.Replace(file.ReadGrants)
+	}
+	if err := applySavedMode(m.session, file); err != nil {
+		return err
 	}
 	if err := m.session.Store.DeleteAllMessages(context.Background(), file.ID); err != nil {
 		return err
@@ -309,22 +410,44 @@ func (m *programModel) resumeHere(file sess.File) error {
 	m.bindChat(m.session)
 	m.chat.chatID = file.ID
 	m.chat.sessionTitle = file.Title
+	m.adoptReview(file)
 	m.chat.err = nil
 	m.chat.status = ""
+	m.chat.seedSeenPlans(file.Messages)
 	m.chat.afterStoreRefresh()
 	return nil
 }
 
 func loadSavedChat(next *app.Session, file sess.File) error {
-	if file.Mode != "" {
-		if err := next.SetMode(app.Mode(file.Mode)); err != nil {
-			return err
-		}
+	if next.Grants != nil {
+		next.Grants.Replace(file.ReadGrants)
+	}
+	if err := applySavedMode(next, file); err != nil {
+		return err
 	}
 	if len(file.Messages) == 0 {
 		return nil
 	}
 	return next.Store.AddMessages(context.Background(), file.ID, file.Messages...)
+}
+
+func applySavedMode(session *app.Session, file sess.File) error {
+	session.SetModelOverrides(file.Models)
+	target := session.Mode
+	if file.Mode != "" {
+		target = app.Mode(file.Mode)
+	}
+	want := ""
+	if file.Models != nil {
+		want = file.Models[string(target)]
+	}
+	if want == "" {
+		want = session.Config.ModelFor(string(target))
+	}
+	if target == session.Mode && want == session.ActiveModel() {
+		return nil
+	}
+	return session.SetMode(target)
 }
 
 func (m *programModel) chooseTrust(trusted bool) tea.Cmd {
@@ -376,7 +499,7 @@ func (m *programModel) View() string {
 	b.WriteString(helpStyle.Render("y trust · n read-only · q quit"))
 	if m.err != nil {
 		b.WriteString("\n")
-		b.WriteString(errStyle.Render(m.err.Error()))
+		b.WriteString(wrapStyled(m.err.Error(), errStyle, m.width))
 	}
 	return b.String()
 }

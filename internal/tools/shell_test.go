@@ -7,12 +7,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cgund98/gopi/internal/sandbox"
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 func TestShellRejectsWiderProfileAndOutsideCwd(t *testing.T) {
@@ -267,6 +269,13 @@ func TestUnsandboxedRequiresApprovalAndSkipsSeatbelt(t *testing.T) {
 	if strings.Contains(joined, "SSH_AUTH_SOCK") || strings.Contains(joined, "parent-secret") {
 		t.Fatalf("env = %s", joined)
 	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(joined, "HOME="+userHome) {
+		t.Fatalf("env = %s", joined)
+	}
 	if !containsOutput(raw, "ok") {
 		t.Fatalf("result = %s", raw)
 	}
@@ -277,8 +286,10 @@ func TestSeatbeltFailureDoesNotRetryUnsandboxed(t *testing.T) {
 	tool := &Shell{Root: root, HomeDir: t.TempDir()}
 	var names []string
 	orig := launchCommand
+	var sandboxedEnv string
 	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
 		names = append(names, profile.Name)
+		sandboxedEnv = strings.Join(profile.Env, "\n")
 		return sandbox.Result{}, fmt.Errorf("sandbox-exec failed")
 	}
 	defer func() { launchCommand = orig }()
@@ -302,13 +313,16 @@ func TestSeatbeltFailureDoesNotRetryUnsandboxed(t *testing.T) {
 	if len(names) != 1 || names[0] != sandbox.ProfileSandbox {
 		t.Fatalf("launches = %#v", names)
 	}
+	if strings.Contains(sandboxedEnv, "HOME=") {
+		t.Fatalf("sandboxed env = %s", sandboxedEnv)
+	}
 }
 
 func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
 	root := openTemp(t)
 	home := t.TempDir()
 	const secret = "token-value-xyz"
-	tool := &Shell{Root: root, HomeDir: home, Secrets: map[string]string{"DEPLOY_TOKEN": secret, "openai_api_key": "sk-host"}}
+	tool := &Shell{Root: root, HomeDir: home, Secrets: map[string]string{"DEPLOY_TOKEN": secret, gopisecrets.OpenAIAPIKey: "sk-host"}}
 	orig := launchCommand
 	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
 		value := ""
@@ -323,7 +337,7 @@ func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
 		return sandbox.Result{Stdout: value}, nil
 	}
 	defer func() { launchCommand = orig }()
-	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN","openai_api_key"]}`))
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN","`+gopisecrets.OpenAIAPIKey+`"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,5 +360,80 @@ func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
 	}
 	if strings.Contains(string(audit), secret) || !strings.Contains(string(audit), "secrets=DEPLOY_TOKEN") {
 		t.Fatalf("audit = %s", audit)
+	}
+}
+
+func TestShellDropsHostOnlySecrets(t *testing.T) {
+	secrets := map[string]string{"gcal_token": "x", "DEPLOY_TOKEN": "y"}
+	got := injectedSecretNames(secrets, []string{"gcal_token", "DEPLOY_TOKEN"}, []string{"gcal_token"})
+	if len(got) != 1 || got[0] != "DEPLOY_TOKEN" {
+		t.Fatalf("injected = %#v", got)
+	}
+}
+
+func TestShellProfileDeniesSecretFiles(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("sandboxed shell is macOS only")
+	}
+	token := filepath.Join(t.TempDir(), "gcal_token.json")
+	tool := &Shell{Root: openTemp(t), HomeDir: t.TempDir(), SecretFiles: []string{token}}
+	var saw sandbox.Profile
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		saw = profile
+		return sandbox.Result{Stdout: "ok\n"}, nil
+	}
+	defer func() { launchCommand = orig }()
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, pattern := range saw.DenyRead {
+		if regexp.MustCompile(pattern).MatchString(token) {
+			return
+		}
+	}
+	t.Fatalf("deny-read list misses %s: %#v", token, saw.DenyRead)
+}
+
+func TestShellProfileIncludesSessionGrant(t *testing.T) {
+	root := openTemp(t)
+	outside := t.TempDir()
+	grants := &ReadGrants{}
+	grants.Add(outside)
+	tool := &Shell{Root: root, HomeDir: t.TempDir(), Grants: grants}
+	reads := sessionReads(grants, false)
+	if len(reads) != 1 || reads[0] != outside {
+		t.Fatalf("reads = %#v", reads)
+	}
+	if sessionReads(grants, true) != nil {
+		t.Fatal("unsandboxed profile included session reads")
+	}
+	body, err := sandbox.SeatbeltProfile(sandbox.Profile{
+		SessionReads: reads,
+		DenyRead:     []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$"},
+		ExtraReads:   []string{filepath.Join(outside, ".env")},
+		Network:      sandbox.NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, outside) {
+		t.Fatalf("profile missing grant:\n%s", body)
+	}
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	var saw sandbox.Profile
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		saw = profile
+		return sandbox.Result{Stdout: "ok\n"}, nil
+	}
+	defer func() { launchCommand = orig }()
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hi"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(saw.SessionReads) != 1 || saw.SessionReads[0] != outside {
+		t.Fatalf("profile reads = %#v", saw.SessionReads)
 	}
 }

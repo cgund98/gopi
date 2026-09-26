@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 func TestWebSearchTruncatesAndDropsEmpty(t *testing.T) {
@@ -81,7 +83,7 @@ func TestWebSearchMissingKeySkipsHTTP(t *testing.T) {
 	}))
 	defer server.Close()
 	_, err := (&WebSearch{Endpoint: server.URL}).Execute(context.Background(), json.RawMessage(`{"query":"gopi"}`))
-	if err == nil || !strings.Contains(err.Error(), "search_api_key") {
+	if err == nil || !strings.Contains(err.Error(), gopisecrets.SearchAPIKey) {
 		t.Fatalf("err = %v", err)
 	}
 	if called {

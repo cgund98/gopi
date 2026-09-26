@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -27,8 +28,10 @@ func renderTranscript(
 	cards []toolCardView,
 	selectedTool int,
 	width int,
+	showUsage bool,
+	thoughts map[string]time.Duration,
 ) string {
-	return renderTranscriptProgress(messages, cards, selectedTool, width, nil)
+	return renderTranscriptProgress(messages, cards, selectedTool, width, showUsage, nil, thoughts)
 }
 
 func renderTranscriptProgress(
@@ -36,7 +39,9 @@ func renderTranscriptProgress(
 	cards []toolCardView,
 	selectedTool int,
 	width int,
+	showUsage bool,
 	progress func(done, total int),
+	thoughts map[string]time.Duration,
 ) string {
 	if len(messages) == 0 {
 		return helpStyle.Render("Send a message to get started.")
@@ -51,7 +56,11 @@ func renderTranscriptProgress(
 
 	total := len(messages)
 	done := 0
-	for _, message := range messages {
+	usageAt := -1
+	if showUsage {
+		usageAt = lastUsageIndex(messages)
+	}
+	for i, message := range messages {
 		done++
 		if progress != nil {
 			progress(done, total)
@@ -95,11 +104,18 @@ func renderTranscriptProgress(
 				}
 				if result, ok := toolResults[toolCall.ID]; ok {
 					renderedResults[toolCall.ID] = struct{}{}
-					if idx < 0 || !hideToolResult(cards[idx]) {
+					if idx >= 0 && hideToolResult(cards[idx]) {
+						continue
+					}
+					if text := renderToolResultMessage(messages, cards, toolCall.ID, result, width); text != "" {
 						b.WriteByte('\n')
-						b.WriteString(renderToolResultMessage(cards, toolCall.ID, result, width))
+						b.WriteString(text)
 					}
 				}
+			}
+			if line := turnSummaryLine(showUsage, i == usageAt, message, thoughts); line != "" {
+				b.WriteByte('\n')
+				b.WriteString(toolDimStyle.Render(line))
 			}
 			previousRole = gogent.MessageRoleAssistant
 
@@ -107,13 +123,40 @@ func renderTranscriptProgress(
 			if _, ok := renderedResults[message.ToolCallID]; ok {
 				continue
 			}
+			text := renderToolResultMessage(messages, cards, message.ToolCallID, message, width)
+			if text == "" {
+				continue
+			}
 			writeTranscriptGap(&b, &first)
-			b.WriteString(renderToolResultMessage(cards, message.ToolCallID, message, width))
+			b.WriteString(text)
 			previousRole = gogent.MessageRoleTool
 		}
 	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func turnSummaryLine(showFooter, isUsage bool, message gogent.Message, worked map[string]time.Duration) string {
+	if !showFooter {
+		return ""
+	}
+	usage := ""
+	if isUsage {
+		usage = formatTurnUsage(message.Usage)
+	}
+	workedLine := ""
+	if worked != nil && message.ID != "" {
+		if d, ok := worked[message.ID]; ok && d >= 0 {
+			workedLine = "Worked for " + formatThought(d)
+		}
+	}
+	if usage == "" {
+		return workedLine
+	}
+	if workedLine == "" {
+		return usage
+	}
+	return usage + "  " + workedLine
 }
 
 func continuesAssistantTurn(role gogent.MessageRole) bool {
@@ -140,7 +183,10 @@ func renderAssistantContent(message gogent.Message, width int) string {
 	return renderMarkdown(message.Content, width)
 }
 
-func renderToolResultMessage(cards []toolCardView, toolCallID string, message gogent.Message, width int) string {
+func renderToolResultMessage(messages []gogent.Message, cards []toolCardView, toolCallID string, message gogent.Message, width int) string {
+	if card, ok := toolCardByID(cards, toolCallID); ok && card.ToolName == "tasks" && !strings.Contains(message.Content, `"error"`) {
+		return renderFinishedTaskLines(messages, cards, toolCallID, width)
+	}
 	if card, ok := toolCardByID(cards, toolCallID); ok {
 		if hideToolResult(card) {
 			return ""
@@ -206,18 +252,64 @@ func wrapText(text string, width int) string {
 }
 
 func breakLine(line string, maxWidth int) []string {
-	if len(line) <= maxWidth {
+	return wrapWidth(line, maxWidth)
+}
+
+func wrapWidth(line string, maxWidth int) []string {
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	if lipgloss.Width(line) <= maxWidth {
 		return []string{line}
 	}
 	var parts []string
-	for len(line) > maxWidth {
-		parts = append(parts, line[:maxWidth])
-		line = line[maxWidth:]
+	var current strings.Builder
+	width := 0
+	for _, r := range line {
+		rw := lipgloss.Width(string(r))
+		if rw > maxWidth {
+			rw = maxWidth
+		}
+		if width > 0 && width+rw > maxWidth {
+			parts = append(parts, current.String())
+			current.Reset()
+			width = 0
+		}
+		current.WriteRune(r)
+		width += rw
 	}
-	if line != "" {
-		parts = append(parts, line)
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
 	}
 	return parts
+}
+
+func wrapBlock(text string, width int) string {
+	if width < 8 {
+		width = 8
+	}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		out = append(out, wrapWidth(line, width)...)
+	}
+	return strings.Join(out, "\n")
+}
+
+func wrapStyled(text string, style lipgloss.Style, width int) string {
+	var lines []string
+	for _, line := range strings.Split(wrapBlock(text, width), "\n") {
+		lines = append(lines, style.Render(line))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func lastUsageIndex(messages []gogent.Message) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == gogent.MessageRoleAssistant && !messages[i].Usage.Empty() {
+			return i
+		}
+	}
+	return -1
 }
 
 func syncTranscriptViewport(
@@ -226,11 +318,13 @@ func syncTranscriptViewport(
 	cards []toolCardView,
 	selectedTool int,
 	followEnd bool,
+	showUsage bool,
+	thoughts map[string]time.Duration,
 ) {
 	atBottom := vp.AtBottom()
 	offset := vp.YOffset
 
-	vp.SetContent(renderTranscript(messages, cards, selectedTool, vp.Width))
+	vp.SetContent(renderTranscript(messages, cards, selectedTool, vp.Width, showUsage, thoughts))
 
 	if followEnd || atBottom {
 		vp.GotoBottom()

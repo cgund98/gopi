@@ -8,6 +8,8 @@ import (
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/cgund98/gopi/internal/toolview"
 )
 
 const (
@@ -142,13 +144,13 @@ func (m *chatModel) resolveSubmissionPending() (gogent.PendingToolCall, bool) {
 	return m.pendingApprovals[0], true
 }
 
-func renderApprovalPrompt(pending gogent.PendingToolCall, width int) string {
-	card := toolCardView{ToolName: pending.ToolName, Args: pending.Args}
+func renderApprovalPrompt(pending gogent.PendingToolCall, renderer toolview.Renderer, width int) string {
+	card := toolCardView{ToolName: pending.ToolName, Args: pending.Args, Renderer: renderer}
 	var b strings.Builder
-	b.WriteString(renderToolLine(toolHeadline(card), toolCardPending, true))
+	b.WriteString(renderToolLine(toolHeadline(card), toolCardPending, true, width))
 	b.WriteString("\n\n")
 	if pending.Reason != "" {
-		b.WriteString(statusStyle.Render(pending.Reason))
+		b.WriteString(wrapStyled(pending.Reason, statusStyle, width))
 		b.WriteByte('\n')
 	}
 	if body := renderApprovalBody(card, width); body != "" {

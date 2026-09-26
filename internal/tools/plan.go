@@ -20,8 +20,9 @@ const planIgnoreLine = ".gopi/plans"
 
 type writePlanArgs struct {
 	PlanName string `json:"plan_name" jsonschema:"description=Short name for a new plan file. Used when path is omitted or the file does not exist."`
-	Body     string `json:"body" jsonschema:"description=Full markdown plan."`
+	Body     string `json:"body" jsonschema:"description=Full markdown plan, without todo frontmatter."`
 	Path     string `json:"path,omitempty" jsonschema:"description=Existing plan under .gopi/plans to overwrite. Omit to create a new file."`
+	Todos    []Task `json:"todos,omitempty" jsonschema:"description=Implementation steps written as frontmatter. Each has an id, content, and status."`
 }
 
 // WritePlan creates or updates a markdown plan under <workspace>/.gopi/plans.
@@ -33,7 +34,7 @@ type WritePlan struct {
 func (t *WritePlan) Name() string { return "write_plan" }
 
 func (t *WritePlan) Description() string {
-	return "Create or update a plan under <workspace>/.gopi/plans. Pass path to overwrite an existing plan file. Omit path, or pass a path that does not exist, to create <plan_name>-<uuid>.md. A plan inside the workspace does not ask for approval. An untrusted workspace is refused. Saving a plan adds .gopi/plans to the workspace-root .gitignore when that file already exists."
+	return "Create or update a plan under <workspace>/.gopi/plans. Pass path to overwrite an existing plan file. Omit path, or pass a path that does not exist, to create <plan_name>-<uuid>.md. Pass todos for the implementation steps. Each todo has an id, content, and status of pending, in_progress, completed, or canceled. The body is the markdown plan and does not include the todo list. A plan inside the workspace does not ask for approval. An untrusted workspace is refused. Saving a plan adds .gopi/plans to the workspace-root .gitignore when that file already exists."
 }
 
 func (t *WritePlan) Parameters() json.RawMessage { return schemaFor(new(writePlanArgs)) }
@@ -62,7 +63,11 @@ func (t *WritePlan) Execute(_ context.Context, raw json.RawMessage) (json.RawMes
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
 		return nil, fmt.Errorf("create directory: %w", err)
 	}
-	if err := os.WriteFile(resolved, []byte(args.Body), 0o644); err != nil {
+	todos, err := normalizeTasks(args.Todos)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(resolved, []byte(FormatPlan(todos, args.Body)), 0o644); err != nil {
 		return nil, fmt.Errorf("write plan: %w", err)
 	}
 	ignoreUpdated, err := appendPlanIgnore(t.Root.Path)
@@ -180,4 +185,50 @@ func hasIgnoreLine(body, line string) bool {
 	return false
 }
 
+// UpdatePlan overwrites a plan that already exists. It does not create one.
+type UpdatePlan struct {
+	Inner *WritePlan
+}
+
+func (t *UpdatePlan) Name() string { return "write_plan" }
+
+func (t *UpdatePlan) Description() string {
+	return "Update an existing markdown plan under <workspace>/.gopi/plans. Pass path to that file, the full body, and the todos. This does not create a new plan."
+}
+
+func (t *UpdatePlan) Parameters() json.RawMessage { return schemaFor(new(writePlanArgs)) }
+
+func (t *UpdatePlan) RequiresApproval(context.Context, json.RawMessage) (gogent.ApprovalDecision, error) {
+	return gogent.ApprovalDecision{}, nil
+}
+
+func (t *UpdatePlan) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if t.Inner == nil {
+		return nil, fmt.Errorf("plan writer is not configured")
+	}
+	args, err := parseWritePlan(raw)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(args.Path) == "" {
+		return nil, fmt.Errorf("path is required")
+	}
+	resolved, outside, err := t.Inner.Root.Canonical(args.Path)
+	if err != nil {
+		return accessDenied(args.Path, err.Error()), nil
+	}
+	plans := filepath.Join(t.Inner.Root.Path, ".gopi", "plans")
+	if outside || !insideDir(plans, resolved) || !strings.HasSuffix(resolved, ".md") {
+		return accessDenied(args.Path, "path must be an existing markdown file under .gopi/plans"), nil
+	}
+	if _, statErr := os.Stat(resolved); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return accessDenied(args.Path, "plan file does not exist"), nil
+		}
+		return accessDenied(args.Path, statErr.Error()), nil
+	}
+	return t.Inner.Execute(ctx, raw)
+}
+
 var _ gogent.Tool = (*WritePlan)(nil)
+var _ gogent.Tool = (*UpdatePlan)(nil)

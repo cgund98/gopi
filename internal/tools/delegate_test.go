@@ -23,6 +23,7 @@ func TestDelegateDescriptionCoversUseAndElevation(t *testing.T) {
 		"network_hosts",
 		"unrestricted",
 		"untrusted observation",
+		"call grant_read for it first",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("description missing %q", want)
@@ -45,9 +46,94 @@ func TestChildRegistryOmitsEditAndDelegate(t *testing.T) {
 			t.Fatalf("missing %s in %#v", name, names)
 		}
 	}
-	if names["edit_file"] || names["delegate"] || names["web_search"] || names["forecast"] {
+	if names["edit_file"] || names["delegate"] || names["web_search"] || names["web_fetch"] || names["tasks"] || names["forecast"] || names["grant_read"] {
 		t.Fatalf("child tools = %#v", names)
 	}
+}
+
+func TestChildReadsThroughSessionGrants(t *testing.T) {
+	root := openTemp(t)
+	outside := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(outside); err == nil {
+		outside = resolved
+	}
+	target := filepath.Join(outside, "notes.txt")
+	if err := os.WriteFile(target, []byte("granted body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := json.RawMessage(`{"path":` + jsonString(target) + `}`)
+
+	ungranted, err := (&Delegate{Root: root, Rules: rules}).childRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied, err := ungranted.GetTool("read_file").Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(denied), "access_denied") {
+		t.Fatalf("ungranted read = %s", denied)
+	}
+
+	grants := &ReadGrants{}
+	grants.Add(outside)
+	granted, err := (&Delegate{Root: root, Rules: rules, Grants: grants}).childRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := granted.GetTool("read_file")
+	decision, err := read.RequiresApproval(context.Background(), args)
+	if err != nil || decision.Required {
+		t.Fatalf("granted read decision = %+v, %v", decision, err)
+	}
+	body, err := read.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "granted body") {
+		t.Fatalf("granted read = %s", body)
+	}
+}
+
+func TestChildToolCallsReportProgress(t *testing.T) {
+	root := openTemp(t)
+	if err := os.WriteFile(filepath.Join(root.Path, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	progress := &DelegateProgress{}
+	registry, err := (&Delegate{Root: root, Progress: progress}).childRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := progress.Snapshot(); ok {
+		t.Fatal("progress reports a subagent before one starts")
+	}
+	progress.start("find the entrypoint")
+	for _, call := range []struct{ tool, args string }{
+		{"read_file", `{"path":"main.go"}`},
+		{"grep", `{"pattern":"package  main"}`},
+	} {
+		if _, err := registry.GetTool(call.tool).Execute(context.Background(), json.RawMessage(call.args)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, ok := progress.Snapshot()
+	if !ok || status.Task != "find the entrypoint" || status.ToolCalls != 2 || status.Last != "grep package main" {
+		t.Fatalf("status = %+v, running = %v", status, ok)
+	}
+	progress.finish()
+	if _, ok := progress.Snapshot(); ok {
+		t.Fatal("progress still running after finish")
+	}
+}
+
+func jsonString(s string) string {
+	quoted, _ := json.Marshal(s)
+	return string(quoted)
 }
 
 func TestChildProtectedReadAndUnrestrictedShellFailClosed(t *testing.T) {

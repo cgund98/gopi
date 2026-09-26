@@ -8,6 +8,8 @@ import (
 
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/lipgloss"
+
+	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 func TestEditHeadlineAndDiff(t *testing.T) {
@@ -21,7 +23,7 @@ func TestEditHeadlineAndDiff(t *testing.T) {
 		t.Fatalf("headline = %q", got)
 	}
 	body := renderToolBody(card, 80)
-	if !strings.Contains(body, "demo.txt") || !strings.Contains(body, "alpha") || !strings.Contains(body, "beta") {
+	if !strings.Contains(body, "demo.txt") || !strings.Contains(body, "alpha") || !strings.Contains(body, "beta") || !strings.Contains(body, "+1") || !strings.Contains(body, "−1") {
 		t.Fatalf("diff = %q", body)
 	}
 	if !strings.Contains(body, "╭") || !strings.Contains(body, "1") {
@@ -30,6 +32,40 @@ func TestEditHeadlineAndDiff(t *testing.T) {
 	assertFrameContainsLines(t, body)
 	if !hideToolResult(card) {
 		t.Fatal("successful edit should hide the JSON result")
+	}
+}
+
+func TestSearchWithBlockedPathsShowsSummary(t *testing.T) {
+	result := `{"blocked_paths":["scratch"],"denied":[{"error":"access_denied","message":"protected path scratch","path":"scratch"}],"files":["go.mod"],"message":"The sandbox blocked file access.","truncated":false}`
+	for _, name := range []string{"find", "grep"} {
+		card := toolCardView{ToolName: name, State: toolCardCompleted, Result: result}
+		if hideToolResult(card) {
+			t.Fatalf("%s: blocked result hidden", name)
+		}
+		got := renderFriendlyResult(card, result, 80)
+		if !strings.Contains(got, "Blocked: scratch") || strings.Contains(got, "{") {
+			t.Fatalf("%s: rendered = %q", name, got)
+		}
+	}
+	clean := toolCardView{ToolName: "find", State: toolCardCompleted, Result: `{"files":["go.mod"],"truncated":false}`}
+	if !hideToolResult(clean) {
+		t.Fatal("clean find result should stay hidden")
+	}
+}
+
+func TestFailedEditHidesDiff(t *testing.T) {
+	args := json.RawMessage(`{"path":"demo.txt","old":"alpha","new":"beta"}`)
+	for _, card := range []toolCardView{
+		{ToolName: "edit_file", Args: args, State: toolCardFailed, Result: `{"error":"old text was not found"}`},
+		{ToolName: "edit_file", Args: args, State: toolCardCompleted, Result: `{"error":"access_denied","path":"demo.txt"}`},
+	} {
+		if body := renderToolBody(card, 80); body != "" {
+			t.Fatalf("state %s: diff = %q", card.State, body)
+		}
+	}
+	pending := toolCardView{ToolName: "edit_file", Args: args, State: toolCardPending}
+	if renderApprovalBody(pending, 80) == "" {
+		t.Fatal("approval card should still show the diff")
 	}
 }
 
@@ -122,8 +158,38 @@ func TestReadAndGrepHeadlines(t *testing.T) {
 		t.Fatalf("find headline = %q", got)
 	}
 	shell := toolCardView{ToolName: "shell", Args: json.RawMessage(`{"command":"go test"}`)}
-	if got := toolHeadline(shell); got != "shell go test" {
+	if got := toolHeadline(shell); got != "$ go test" {
 		t.Fatalf("shell headline = %q", got)
+	}
+	fetch := toolCardView{ToolName: "web_fetch", Args: json.RawMessage(`{"url":"https://example.com/docs"}`)}
+	if got := toolHeadline(fetch); got != "fetch https://example.com/docs" {
+		t.Fatalf("fetch headline = %q", got)
+	}
+}
+
+func TestShellCommandWraps(t *testing.T) {
+	command := strings.Repeat("echo ", 20) + "done"
+	card := toolCardView{ToolName: "shell", Args: json.RawMessage(`{"command":"` + command + `"}`)}
+	rendered := stripANSI(renderInlineToolBlock(card, false, 40))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("command stayed on one line: %q", rendered)
+	}
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w > 40 {
+			t.Fatalf("line width %d exceeds 40: %q", w, line)
+		}
+	}
+	if !strings.HasPrefix(lines[0], "> $ echo") {
+		t.Fatalf("first line = %q", lines[0])
+	}
+
+	stdout := strings.Repeat("x", 80)
+	body := renderFriendlyResult(toolCardView{ToolName: "shell"}, fmt.Sprintf(`{"stdout":%q,"stderr":"","exit_code":0}`, stdout), 40)
+	assertFrameContainsLines(t, body)
+	plain := stripANSI(body)
+	if strings.Count(plain, "x") != len(stdout) {
+		t.Fatalf("wrapped shell output dropped characters: %q", plain)
 	}
 }
 
@@ -159,9 +225,20 @@ func TestSearchResultStaysHidden(t *testing.T) {
 		t.Fatal("successful search should hide its results")
 	}
 	failed := card
-	failed.Result = `{"error":"execution_failed","message":"search_api_key is missing"}`
+	failed.Result = `{"error":"execution_failed","message":"` + gopisecrets.SearchAPIKey + ` is missing"}`
 	if hideToolResult(failed) {
 		t.Fatal("failed search should stay visible")
+	}
+	fetched := toolCardView{
+		ToolName: "web_fetch",
+		Result:   `{"url":"https://example.com","title":"Docs","text":"Read this"}`,
+	}
+	if !hideToolResult(fetched) {
+		t.Fatal("successful fetch should hide its page text")
+	}
+	fetched.Result = `{"error":"execution_failed","message":"url must be http or https"}`
+	if hideToolResult(fetched) {
+		t.Fatal("failed fetch should stay visible")
 	}
 }
 
@@ -182,7 +259,7 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		ToolName: "read_file",
 		Args:     json.RawMessage(`{"path":".env"}`),
 		Reason:   "Protected path **/.env: scratch/demo/.env",
-	}, 60))
+	}, nil, 60))
 	if !strings.Contains(view, "read .env") || !strings.Contains(view, "Protected path **/.env: scratch/demo/.env") || strings.Contains(view, `"path"`) {
 		t.Fatalf("prompt = %q", view)
 	}
@@ -191,8 +268,8 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		ToolName: "shell",
 		Args:     json.RawMessage(`{"command":"cat .env","read_paths":[".env"]}`),
 		Reason:   "Elevated file access: read /work/.env",
-	}, 60))
-	if !strings.Contains(shell, "shell cat .env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
+	}, nil, 60))
+	if !strings.Contains(shell, "$ cat .env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
 		t.Fatalf("shell prompt = %q", shell)
 	}
 
@@ -200,7 +277,7 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		ToolName: "custom",
 		Args:     json.RawMessage(`{"query":"hi"}`),
 		Reason:   "approval required",
-	}, 60))
+	}, nil, 60))
 	if !strings.Contains(unknown, `"query"`) {
 		t.Fatalf("unknown prompt = %q", unknown)
 	}

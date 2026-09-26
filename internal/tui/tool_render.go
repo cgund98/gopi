@@ -33,9 +33,9 @@ func toolHeadline(card toolCardView) string {
 		return searchHeadline("find", card.Args)
 	case "shell":
 		if command := stringArg(card.Args, "command"); command != "" {
-			return "shell " + command
+			return "$ " + command
 		}
-		return "shell"
+		return "$"
 	case "delegate":
 		if task := stringArg(card.Args, "task"); task != "" {
 			return "delegate " + task
@@ -54,13 +54,29 @@ func toolHeadline(card toolCardView) string {
 			return "search " + query
 		}
 		return "search"
+	case "web_fetch":
+		if target := stringArg(card.Args, "url"); target != "" {
+			return "fetch " + target
+		}
+		return "fetch"
+	case "tasks":
+		done, total := taskHeadlineCount(card.Result)
+		if total == 0 {
+			return "tasks"
+		}
+		return fmt.Sprintf("tasks %d/%d", done, total)
 	default:
+		if card.Renderer != nil {
+			if headline := card.Renderer.Headline(card.Args); headline != "" {
+				return headline
+			}
+		}
 		return card.ToolName
 	}
 }
 
 func renderToolBody(card toolCardView, width int) string {
-	if card.ToolName != "edit_file" {
+	if card.ToolName != "edit_file" || card.State == toolCardFailed || resultError(card.Result) {
 		return ""
 	}
 	path, old, newText := editArgs(card.Args)
@@ -68,25 +84,48 @@ func renderToolBody(card toolCardView, width int) string {
 }
 
 func hideToolResult(card toolCardView) bool {
-	if strings.Contains(card.Result, `"error"`) {
+	if resultError(card.Result) {
 		return false
 	}
 	switch card.ToolName {
-	case "edit_file", "read_file", "grep", "find", "web_search":
+	case "grep", "find":
+		return len(blockedPaths(card.Result)) == 0
+	case "edit_file", "read_file", "web_search", "web_fetch":
 		return true
 	default:
-		return false
+		view, ok := customResult(card, card.Result)
+		return ok && view.Hide
 	}
 }
 
-func renderFriendlyResult(card toolCardView, content string, width int) string {
+// resultError reports a top-level error field, not errors nested in lists such as denied.
+func resultError(content string) bool {
 	var probe struct {
 		Error string `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(content), &probe); err == nil && probe.Error != "" {
+	return json.Unmarshal([]byte(content), &probe) == nil && probe.Error != ""
+}
+
+func blockedPaths(content string) []string {
+	var probe struct {
+		Blocked []string `json:"blocked_paths"`
+	}
+	if json.Unmarshal([]byte(content), &probe) != nil {
+		return nil
+	}
+	return probe.Blocked
+}
+
+func renderFriendlyResult(card toolCardView, content string, width int) string {
+	if resultError(content) {
 		return ""
 	}
 	switch card.ToolName {
+	case "grep", "find":
+		if blocked := blockedPaths(content); len(blocked) > 0 {
+			return toolDimStyle.Render(indentBlock("Blocked: "+strings.Join(blocked, ", "), width))
+		}
+		return ""
 	case "shell":
 		var payload struct {
 			Stdout    string `json:"stdout"`
@@ -111,6 +150,9 @@ func renderFriendlyResult(card toolCardView, content string, width int) string {
 	case "write_plan":
 		return renderPlanResult(card, content, width)
 	default:
+		if view, ok := customResult(card, content); ok {
+			return renderToolView(view, width)
+		}
 		return ""
 	}
 }
@@ -190,9 +232,17 @@ func renderPlanResult(card toolCardView, content string, width int) string {
 		verb = "Created"
 	}
 	inner, textWidth := outputFrameMetrics(width)
-	lines := []string{planTitleStyle.Render(truncateWidth(verb+" "+payload.Path, textWidth))}
+	lines := []string{}
+	pathParts := wrapWidth(verb+" "+payload.Path, textWidth)
+	for i, part := range pathParts {
+		if i == 0 {
+			lines = append(lines, planTitleStyle.Render(part))
+			continue
+		}
+		lines = append(lines, planTitleStyle.Render(part))
+	}
 	if payload.Gitignore {
-		lines = append(lines, toolDimStyle.Render(truncateWidth("Added .gopi/plans to .gitignore", textWidth)))
+		lines = append(lines, toolDimStyle.Render(strings.Join(wrapWidth("Added .gopi/plans to .gitignore", textWidth), "\n")))
 	}
 	if body := strings.TrimSpace(stringArg(card.Args, "body")); body != "" {
 		preview, hidden := previewLines(body, maxDiffLines)
@@ -209,7 +259,9 @@ func renderOutputFrame(lines []string, width int) string {
 	inner, textWidth := outputFrameMetrics(width)
 	var body []string
 	for _, line := range lines {
-		body = append(body, toolDimStyle.Render(truncateWidth(line, textWidth)))
+		for _, part := range wrapWidth(line, textWidth) {
+			body = append(body, toolDimStyle.Render(part))
+		}
 	}
 	return diffFrameStyle.Width(inner).Render(strings.Join(body, "\n"))
 }
@@ -234,6 +286,11 @@ func renderApprovalBody(card toolCardView, width int) string {
 	case "read_file", "grep", "find", "shell":
 		return renderPathGrants(card.Args, width)
 	default:
+		if card.Renderer != nil {
+			if view := card.Renderer.RenderApproval(card.Args); !view.IsZero() {
+				return renderToolView(view, width)
+			}
+		}
 		return renderToolArgsBlock(card.Args, width)
 	}
 }
@@ -261,7 +318,9 @@ func renderPathGrants(args json.RawMessage, width int) string {
 	}
 	var out []string
 	for _, line := range lines {
-		out = append(out, toolDimStyle.Render("  "+truncateWidth(line, bodyWidth)))
+		for _, part := range wrapWidth(line, bodyWidth) {
+			out = append(out, toolDimStyle.Render("  "+part))
+		}
 	}
 	return strings.Join(out, "\n")
 }
@@ -283,11 +342,11 @@ func searchHeadline(name string, args json.RawMessage) string {
 
 func indentBlock(text string, width int) string {
 	bodyWidth := width - 2
-	if bodyWidth < 20 {
-		bodyWidth = 20
+	if bodyWidth < 8 {
+		bodyWidth = 8
 	}
 	var out []string
-	for _, line := range strings.Split(wrapText(text, bodyWidth), "\n") {
+	for _, line := range strings.Split(wrapBlock(text, bodyWidth), "\n") {
 		out = append(out, "  "+line)
 	}
 	return strings.Join(out, "\n")
@@ -373,8 +432,28 @@ func renderEditDiff(path, old, newText string, width int) string {
 		gutterWidth = 2
 	}
 
+	added, deleted := lineCount(newText), lineCount(old)
+	counts := fmt.Sprintf("+%d −%d", added, deleted)
+	room := textWidth - lipgloss.Width(counts) - 1
+	if room < 8 {
+		room = textWidth
+	}
+	parts := wrapWidth(path, room)
+	if len(parts) == 0 {
+		parts = []string{path}
+	}
+	gap := textWidth - lipgloss.Width(parts[0]) - lipgloss.Width(counts)
+	if gap < 1 {
+		gap = 1
+	}
+	title := toolSuccessStyle.Bold(true).Render(parts[0]) + strings.Repeat(" ", gap) + diffAddStyle.Render(fmt.Sprintf("+%d", added)) + " " + diffDelStyle.Render(fmt.Sprintf("−%d", deleted))
+	var headerLines []string
+	headerLines = append(headerLines, title)
+	for _, part := range parts[1:] {
+		headerLines = append(headerLines, toolSuccessStyle.Bold(true).Render(part))
+	}
 	var body []string
-	body = append(body, toolSuccessStyle.Bold(true).Render(truncateWidth(path, textWidth)))
+	body = append(body, headerLines...)
 	body = append(body, dividerStyle.Render(strings.Repeat("─", textWidth)))
 	if len(rows) == 0 {
 		body = append(body, toolDimStyle.Render("(empty)"))
@@ -389,6 +468,13 @@ type diffRow struct {
 	sign  string
 	text  string
 	style lipgloss.Style
+}
+
+func lineCount(text string) int {
+	if text == "" {
+		return 0
+	}
+	return len(strings.Split(strings.TrimRight(text, "\n"), "\n"))
 }
 
 func diffRows(text, sign string, style lipgloss.Style) []diffRow {

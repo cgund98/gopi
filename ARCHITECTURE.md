@@ -185,7 +185,7 @@ Enforce with Seatbelt through `/usr/bin/sandbox-exec` and a profile generated pe
 The generated profile:
 
 - Allows read of the workspace and a small set of system paths the dynamic linker and the shell need (`/usr`, `/bin`, `/opt/homebrew`, `/dev/null`, and the user's selected toolchain roots).
-- Allows write only under the workspace write root and a session temp directory. `/tmp` is private to the command where the profile can express that, so a sandboxed command cannot rendezvous with an unsandboxed process through a shared temp file.
+- Allows write only under the workspace write root, a session temp directory, and `/dev/null`. `/tmp` is private to the command where the profile can express that, so a sandboxed command cannot rendezvous with an unsandboxed process through a shared temp file.
 - Denies read and write of protected paths with rules placed so they match before the workspace allow. Seatbelt is ordered; a workspace-wide allow that is evaluated first would hide the deny.
 - Denies writes to paths that stay protected even when the workspace is writable: `.git/config`, `.git/hooks`, `.git/info/attributes`, `.gopi/**`, ignore files, and the gopi binary's own install path.
 - Denies `network*` except the localhost proxy port when `network` is `allowlist`. When `network` is `deny`, all outbound network is denied, including raw sockets, so a binary that ignores `HTTP_PROXY` still fails.
@@ -291,7 +291,7 @@ Elevation is a `shell` call whose `profile` is wider than `sandbox`. `RequiresAp
 
 The card shows argv as the user will run it, not a model summary, plus the stored `ApprovalDecision.Reason`. Approval of one call does not approve the next identical call. Each model request is a new `ToolCall`, and `RequiresApproval` runs again.
 
-There is no allow-once-for-the-session flag on widened profiles or protected paths in the first milestones. If a session allowlist is added later for default `sandbox` commands, it stores a hash of argv plus cwd plus profile. `RequiresApproval` still requires approval whenever the profile is wider or a file tool targets a protected path.
+`grant_read` asks once to read a file or directory for the rest of this chat, including after the chat is resumed. Later `read_file`, `grep`, `find`, and sandboxed `shell` commands use that path without another prompt. Protected paths stay denied, including under a granted parent. Write access and unsandboxed commands still ask on every call. The delegate child does not receive the grants. Grants are stored on the session file and are not written to `trust.json`. Approval of one widened shell call still does not approve the next call.
 
 Elevated commands keep the scrubbed environment. Passing a secret is a second, separate toggle on the card: a list of env **names** drawn from the broker. The values are inserted by the host after approval and are not written to the transcript.
 
@@ -299,14 +299,18 @@ Elevated commands keep the scrubbed environment. Passing a secret is a second, s
 
 `~/.gopi/secrets.toml` holds credential material. The file is mode `0600`. The model is never given this file as a read root.
 
+An entry is a string or `{ file = "path" }`. A referenced file must be mode `0600`; the broker reads it at startup and keeps its canonical path. Each path becomes a policy rule (`secret <path>`) that denies reads and writes, so file tools need approval and the Seatbelt profile blocks it for sandboxed shell calls, including the delegate child's.
+
 The broker loads secrets into the host process at startup. Consumers:
 
 - The model client reads the provider API key from the broker inside the host. The key is not copied into tool environments, transcripts, or the system prompt.
 - A shell call receives a secret only when the elevation card toggles that env name. The value is copied into the child environment after approval.
+- Custom tool factories (`gopi.WithToolFactory`) read secrets by name at startup through `ToolEnv`. Those names are host-only: they are never offered on an elevation card or injected into a shell call.
 
 Redaction runs on every tool result and every log line before persistence. It replaces:
 
 - Any secret value currently loaded in the broker.
+- Credential fields (keys containing token, secret, key, or password) inside a JSON secret value, such as an OAuth token file.
 - Provider key prefixes and common token shapes (`sk-`, `github_pat_`, `AKIA`, PEM blocks).
 
 Redaction is a backstop for accidental echoes. The primary control is that the child environment does not contain the values. A protected-file read the user approved can still place a secret into the transcript; the card says that before approval.
@@ -323,6 +327,7 @@ The child receives:
 - The parent system prompt plus the task string. The task string is user-visible in the parent transcript.
 - A tool registry that is a subset of the parent's: `read_file`, `grep`, `list_dir`, and `shell` whose `RequiresApproval` refuses any profile other than `sandbox` and any protected path by failing the call rather than pausing. No nested `delegate` beyond a configured depth (default 1). The child never pauses for approval.
 - The same or a stricter sandbox profile. A child cannot receive `network: unrestricted` if the parent call was not already approved for it.
+- The parent's session read grants, read-only. The child can read a directory the user already granted this chat, but it has no `grant_read` and cannot add grants. The parent prompt tells the model to call `grant_read` before delegating work outside the workspace.
 
 If a future child tool requires approval, the prompt goes to the user, not to the parent model. The parent model is not a reviewer.
 
@@ -428,6 +433,8 @@ The UI is a Bubble Tea program patterned on `gogent/examples/tui`: transcript, c
 
 An approval card includes the tool name, canonical cwd, argv or path, the policy delta, and whether stdout will enter the transcript. Approve calls `ApproveToolCall`. Reject calls `RejectToolCall`, which appends gogent's rejection payload and does not call the model; the user's follow-up is a separate `RunWithUserInput`.
 
+A custom tool that implements `gopi.ToolRenderer` supplies its own headline, approval body, and result panel as a structured `ToolView`. Gopi collects renderers before `WrapRedacting` hides them, draws views in its own frame, and keeps error, failed, and rejected results, the approval reason, and the Approve/Reject choices for itself. Renderer output is redacted and stripped of terminal escapes and control characters, and a renderer that panics falls back to the default rendering.
+
 The composer does not interpolate `~/.gopi/secrets` into the outgoing user message. Paste of a high-entropy token matching the redactor raises a confirmation before it is sent.
 
 Cancellation kills the active sandbox process group and aborts the model request. A killed command is an `execution_failed` tool result, not a silent retry outside the sandbox.
@@ -484,11 +491,11 @@ The TUI switches the session among Agent, Ask, and Plan with `/agent`, `/ask`, `
 
 | Mode | Tools | What the model does |
 |------|--------|---------------------|
-| Agent | `read_file`, `grep`, `find`, `shell`, `edit_file`, `delegate`, `web_search` | Changes the workspace and runs commands |
-| Ask | `read_file`, `grep`, `find`, `web_search` | Answers questions about the workspace and the public web. `edit_file` and `shell` are not registered |
+| Agent | `read_file`, `grep`, `find`, `shell`, `edit_file`, `delegate`, `web_search`, `web_fetch`, `tasks`, `write_plan` | Changes the workspace and runs commands. `tasks` is the live checklist. `write_plan` updates an existing file under `.gopi/plans` |
+| Ask | `read_file`, `grep`, `find`, `web_search`, `web_fetch` | Answers questions about the workspace and the public web. `edit_file` and `shell` are not registered |
 | Plan | Ask's tools, plus `write_plan` | Explores, then writes `<workspace>/.gopi/plans/<plan_name>-<uuid>.md`. No file edits and no shell until the user switches to Agent |
 
-Plan does not auto-apply when the user accepts it. Applying the plan is an Agent turn the user starts explicitly. `write_plan` does not ask for approval inside a trusted workspace. A child started by `delegate` does not receive `edit_file`, `delegate`, or `web_search`, and elevated calls fail closed.
+Plan does not auto-apply when the user accepts it. Applying the plan is an Agent turn the user starts explicitly. `write_plan` stores implementation steps in YAML todo frontmatter and does not ask for approval inside a trusted workspace. Building a plan loads those todos into `tasks`. A child started by `delegate` does not receive `edit_file`, `delegate`, `web_search`, `web_fetch`, or `tasks`, and elevated calls fail closed.
 
 ## Remaining work
 

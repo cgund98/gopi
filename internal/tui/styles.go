@@ -22,7 +22,12 @@ var (
 	toolResultStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	diffAddStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	diffDelStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	diffFrameStyle   = lipgloss.NewStyle().
+
+	diffAddBackground      = lipgloss.Color("#12261a")
+	diffAddFocusBackground = lipgloss.Color("#1d4029")
+	diffDelBackground      = lipgloss.Color("#2b1417")
+	diffDelFocusBackground = lipgloss.Color("#4a1f24")
+	diffFrameStyle         = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("238")).
 				Padding(0, 1)

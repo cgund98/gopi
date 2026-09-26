@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/cgund98/gogent"
 
@@ -20,14 +21,15 @@ type readFileArgs struct {
 
 // ReadFile reads a text file inside the workspace.
 type ReadFile struct {
-	Root  workspace.Root
-	Rules policy.Rules
+	Root   workspace.Root
+	Rules  policy.Rules
+	Grants *ReadGrants
 }
 
 func (t *ReadFile) Name() string { return "read_file" }
 
 func (t *ReadFile) Description() string {
-	return "Read a file. Paths outside the workspace and protected paths require approval."
+	return "Read a file. The result gives start_line, end_line, and total_lines for the returned content. When truncated is true, call again with offset set to next_offset to read the rest; lines already returned do not need to be read again. Paths outside the workspace and protected paths require approval. A path covered by grant_read does not ask again unless it is protected."
 }
 
 func (t *ReadFile) Parameters() json.RawMessage { return schemaFor(new(readFileArgs)) }
@@ -37,15 +39,11 @@ func (t *ReadFile) RequiresApproval(_ context.Context, raw json.RawMessage) (gog
 	if err != nil {
 		return gogent.ApprovalDecision{}, nil
 	}
-	if outside {
-		reason := "Path is outside the workspace: " + displayPath(raw)
-		if rule, ok := t.Rules.MatchRead(resolved); ok {
-			reason = "Protected path " + rule + ": " + displayPath(raw)
-		}
-		return gogent.ApprovalDecision{Required: true, Reason: reason}, nil
-	}
 	if rule, ok := t.Rules.MatchRead(resolved); ok {
 		return gogent.ApprovalDecision{Required: true, Reason: "Protected path " + rule + ": " + displayPath(raw)}, nil
+	}
+	if outside && !t.Grants.Covers(resolved) {
+		return gogent.ApprovalDecision{Required: true, Reason: "Path is outside the workspace: " + displayPath(raw)}, nil
 	}
 	return gogent.ApprovalDecision{}, nil
 }
@@ -63,14 +61,66 @@ func (t *ReadFile) Execute(_ context.Context, raw json.RawMessage) (json.RawMess
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
-	text := sliceLines(string(body), args.Offset, args.Limit)
-	if len(text) > maxReadBytes {
-		text = text[:maxReadBytes]
+	window := readWindow(string(body), args.Offset, args.Limit)
+	payload := map[string]any{
+		"path":        args.Path,
+		"content":     window.text,
+		"start_line":  window.start,
+		"end_line":    window.end,
+		"total_lines": window.total,
 	}
-	return json.Marshal(map[string]any{
-		"path":    args.Path,
-		"content": text,
-	})
+	if window.next > 0 {
+		payload["truncated"] = true
+		payload["next_offset"] = window.next
+	}
+	return json.Marshal(payload)
+}
+
+type lineWindow struct {
+	text  string
+	start int
+	end   int
+	total int
+	next  int
+}
+
+// readWindow returns whole lines from offset, up to limit lines and
+// maxReadBytes. next is the 1-based line to pass as offset to continue,
+// or 0 when the window reaches the end of the file or the requested limit.
+func readWindow(text string, offset, limit int) lineWindow {
+	lines := splitKeep(text)
+	window := lineWindow{total: len(lines)}
+	start := 0
+	if offset > 1 {
+		start = offset - 1
+	}
+	if start >= len(lines) {
+		return window
+	}
+	end := len(lines)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	var b strings.Builder
+	i := start
+	for ; i < end; i++ {
+		line := lines[i]
+		if b.Len()+len(line) > maxReadBytes {
+			if b.Len() == 0 {
+				b.WriteString(line[:maxReadBytes])
+				i++
+			}
+			break
+		}
+		b.WriteString(line)
+	}
+	window.text = b.String()
+	window.start = start + 1
+	window.end = i
+	if i < end {
+		window.next = i + 1
+	}
+	return window
 }
 
 func (t *ReadFile) locate(raw json.RawMessage) (resolved string, outside bool, err error) {
@@ -87,29 +137,6 @@ func displayPath(raw json.RawMessage) string {
 		return ""
 	}
 	return args.Path
-}
-
-func sliceLines(text string, offset, limit int) string {
-	if offset <= 1 && limit <= 0 {
-		return text
-	}
-	lines := splitKeep(text)
-	start := 0
-	if offset > 1 {
-		start = offset - 1
-	}
-	if start > len(lines) {
-		return ""
-	}
-	end := len(lines)
-	if limit > 0 && start+limit < end {
-		end = start + limit
-	}
-	out := ""
-	for i := start; i < end; i++ {
-		out += lines[i]
-	}
-	return out
 }
 
 func splitKeep(text string) []string {
