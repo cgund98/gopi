@@ -86,7 +86,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		&tools.Find{Root: root, Rules: rules, Grants: grants},
 		&tools.GrantRead{Root: root, Grants: grants},
 	}
-	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Secrets: cfg.Secrets, Grants: grants, SecretFiles: secretFiles, HostOnly: cfg.HostOnly}
+	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Grants: grants, SecretFiles: secretFiles}
 	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets[gopisecrets.SearchAPIKey]}
 	fetch := &tools.WebFetch{}
 	taskList := tools.NewTaskList(root)

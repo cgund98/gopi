@@ -105,8 +105,6 @@ type chatModel struct {
 	reviewScroll     int
 	reviewErr        string
 	forgetEdit       func(string)
-	secretNames      []string
-	secretSelected   map[string]map[string]bool
 
 	width  int
 	height int

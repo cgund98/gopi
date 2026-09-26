@@ -96,7 +96,6 @@ type Config struct {
 	HomeDir            string
 	Secrets            map[string]string
 	SecretFiles        map[string]string
-	HostOnly           []string
 	Network            string
 	AllowHosts         []string
 	DenyHosts          []string

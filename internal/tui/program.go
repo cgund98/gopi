@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cgund98/gopi/internal/app"
-	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	sess "github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/tools"
 	"github.com/cgund98/gopi/internal/trust"
@@ -185,7 +184,6 @@ func (m *programModel) bindChat(session *app.Session) {
 	if session.Model != nil {
 		m.chat.systemPrompt = session.Model.SystemPrompt()
 	}
-	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets, session.Config.HostOnly...)
 	m.chat.tasks = session.Tasks
 	m.chat.taskEpoch = 0
 	m.chat.taskSeed = nil

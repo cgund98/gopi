@@ -3,7 +3,7 @@
 Extensible personal coding agent.
 
 ```bash
-export OPENAI_API_KEY=...
+export DEEPSEEK_API_KEY=...
 go run ./cmd/gopi
 ```
 
@@ -27,7 +27,7 @@ err := gopi.Run(ctx,
 
 `WithTool` adds the tool only to that mode. It is not added to the delegate child. A name that matches a built-in tool fails at startup.
 
-A tool that needs credentials uses `WithToolFactory`. Gopi calls the factory at startup with a `ToolEnv`, and `env.Secret(name)` reads that name from `~/.gopi/secrets.toml`. A missing name stops startup. A name a factory reads becomes host-only: it is never offered on a shell approval card. `env.SecretPath(name)` returns the file behind a file secret, for a tool that must write a refreshed token back.
+A tool that needs credentials uses `WithToolFactory`. Gopi calls the factory at startup with a `ToolEnv`, and `env.Secret(name)` reads that name from `~/.gopi/secrets.toml`. A missing name stops startup. The value stays in the factory and is never passed into a shell call. `env.SecretPath(name)` returns the file behind a file secret, for a tool that must write a refreshed token back.
 
 ```go
 gopi.WithToolFactory(gopi.ModeAgent, func(env gopi.ToolEnv) (gogent.Tool, error) {
@@ -58,14 +58,21 @@ func (t *Tool) RenderResult(args, result json.RawMessage) gopi.ToolView {
 Gopi keeps its files in `~/.gopi`, mode `0700`. `GOPI_HOME` overrides that directory. The first launch creates `config.toml`.
 
 ```toml
-model = "gpt-5.6-terra"
+model = "deepseek/deepseek-flash"
 max_iterations = 10
+effort = "none"           # none | low | medium | high
 
 [models]
 agent = "gpt-5.6-sol"     # empty uses model
 ask = ""
 plan = ""
 build = ""                # empty uses the agent model; the b key on a plan uses this
+
+[efforts]
+agent = ""                # empty uses effort
+ask = ""
+plan = ""                 # the b key on a plan uses the plan effort
+build = ""
 
 [sandbox]
 network = "deny"          # deny | allowlist
@@ -85,7 +92,9 @@ endpoint = ""             # empty uses Brave Search
 
 `network` defaults to `deny`. `allowlist` sends shell traffic through a local proxy and still blocks private and metadata addresses. `unrestricted` is not a config setting. A single shell call can ask for `network_hosts` or `network = "unrestricted"`, and that call waits for approval.
 
-A name without a prefix uses OpenAI. A `kimi/` prefix uses Kimi. Supported names are `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-4o`, `kimi/kimi-k2.6`, and `kimi/kimi-k2.6-nothink`. The `-nothink` name is the same Kimi model with thinking disabled, so replies start sooner at some cost to planning quality. The default is `gpt-5.6-terra`. An unknown name fails at startup, and a saved `/model` choice that is no longer supported falls back to the config. Gogent sends GPT-5 models with reasoning off when tools are attached, because Chat Completions rejects function tools otherwise. `kimi_api_key` in `secrets.toml` overrides `KIMI_API_KEY`. A key is required only when a resolved model uses that provider.
+A name without a prefix uses OpenAI, a `kimi/` prefix uses Kimi, and a `deepseek/` prefix uses DeepSeek. Supported names are `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-4o`, `kimi/kimi-k2.6`, `deepseek/deepseek-flash`, and `deepseek/deepseek-v3`. The default is `deepseek/deepseek-flash`. An unknown name fails at startup, and a saved `/model` choice that is no longer supported falls back to the config. `kimi_api_key` in `secrets.toml` overrides `KIMI_API_KEY`, `deepseek_api_key` overrides `DEEPSEEK_API_KEY`, and `openai_api_key` overrides `OPENAI_API_KEY`. A key is required only when a resolved model uses that provider.
+
+`effort` sets how much the model thinks before it answers. `none` turns thinking off, `low`, `medium`, and `high` turn it up. The `[efforts]` table overrides `effort` per mode. DeepSeek and Kimi models enable thinking for any value except `none`. OpenAI maps the value straight to `reasoning_effort`, and gogent sends `none` for GPT-5 models with tools attached because Chat Completions rejects function tools otherwise. The default is `none`. `/effort <level>` sets it for the active mode for the rest of the chat, and the level shows next to the model name at the bottom of the screen.
 
 `web_search` calls `https://api.search.brave.com/res/v1/web/search` unless `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. The shell sandbox stays on its own network setting. `web_fetch` reads one public `http` or `https` URL on the host. It does not use the search key or open a socket inside `shell`.
 

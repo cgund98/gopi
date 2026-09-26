@@ -21,7 +21,7 @@ Tool policy without a sandbox is not a security boundary. Cursor's own ignore ru
 - **Deny wins.** A project config, skill, or `AGENTS.md` can narrow permissions. It cannot widen the user's security floor (protected paths, secret scrubbing, metadata-address blocks, approval for elevation).
 - **Approval is per call.** Protected files and privilege elevation are approved once, for that tool call, and then forgotten. Session allowlists are a later convenience for ordinary sandboxed commands, and they never cover protected paths.
 - **The model is untrusted.** File contents, web pages, tool output, skills, and `AGENTS.md` inside a repository are data. They do not grant capabilities.
-- **Secrets stay in the host.** The user toggles env names on an elevation card. The host injects those values into the child environment. The value is not a tool argument, a prompt field, or a log line.
+- **Secrets stay in the host.** A credential value is read by the host and never reaches a tool. It is not a tool argument, a prompt field, or a log line.
 - **macOS first.** The workstation is macOS. Linux uses the same policy types with a different enforcer. Windows is out of scope.
 
 ## System overview
@@ -91,7 +91,7 @@ sequenceDiagram
 | `internal/prompt` | System prompt assembly, `AGENTS.md` discovery, skill catalog |
 | `internal/policy` | Ignore matching, protected paths, network allow and deny |
 | `internal/sandbox` | `Launcher` interface, macOS Seatbelt, Linux bubblewrap |
-| `internal/secrets` | Load, inject by name, redact tool output and logs |
+| `internal/secrets` | Load, redact tool output and logs |
 | `internal/tools` | Tool implementations registered on a `*gogent.ToolRegistry` |
 | `internal/session` | Chat persistence and redacted audit log |
 
@@ -287,13 +287,13 @@ Elevation is a `shell` call whose `profile` is wider than `sandbox`. `RequiresAp
 |---------|--------|----------------|
 | `workspace_network` | Sandbox stays; network becomes unrestricted or a named host list | Protected files, secret values, `.git` hooks and config |
 | `extra_paths` | Named read or write roots, canonicalized and shown | Everything outside those roots; protected floor unless each path is also approved |
-| `unsandboxed` | The user's uid, no Seatbelt or bwrap | Secret injection, unless the user toggles specific env names on |
+| `unsandboxed` | The user's uid, no Seatbelt or bwrap | Protected files, secret values, `.git` hooks and config |
 
 The card shows argv as the user will run it, not a model summary, plus the stored `ApprovalDecision.Reason`. Approval of one call does not approve the next identical call. Each model request is a new `ToolCall`, and `RequiresApproval` runs again.
 
 `grant_read` asks once to read a file or directory for the rest of this chat, including after the chat is resumed. Later `read_file`, `grep`, `find`, and sandboxed `shell` commands use that path without another prompt. Protected paths stay denied, including under a granted parent. Write access and unsandboxed commands still ask on every call. The delegate child does not receive the grants. Grants are stored on the session file and are not written to `trust.json`. Approval of one widened shell call still does not approve the next call.
 
-Elevated commands keep the scrubbed environment. Passing a secret is a second, separate toggle on the card: a list of env **names** drawn from the broker. The values are inserted by the host after approval and are not written to the transcript.
+Elevated commands keep the scrubbed environment. No broker value is passed into the child environment.
 
 ## Secrets
 
@@ -304,8 +304,7 @@ An entry is a string or `{ file = "path" }`. A referenced file must be mode `060
 The broker loads secrets into the host process at startup. Consumers:
 
 - The model client reads the provider API key from the broker inside the host. The key is not copied into tool environments, transcripts, or the system prompt.
-- A shell call receives a secret only when the elevation card toggles that env name. The value is copied into the child environment after approval.
-- Custom tool factories (`gopi.WithToolFactory`) read secrets by name at startup through `ToolEnv`. Those names are host-only: they are never offered on an elevation card or injected into a shell call.
+- Custom tool factories (`gopi.WithToolFactory`) read secrets by name at startup through `ToolEnv`. Those values stay in the factory; they are never copied into a tool environment, a prompt field, or a log line.
 
 Redaction runs on every tool result and every log line before persistence. It replaces:
 
@@ -483,7 +482,7 @@ These are part of the core, not polish.
 - **Dependency pinning** of the Linux helper: never execute a `bwrap` discovered inside the workspace.
 - **Context budgets** for `AGENTS.md` and skill catalogs, with truncation marked in the prompt.
 - **Structured tool errors** that match gogent's existing error style (`access_denied` alongside `execution_failed`) so the model can recover without dumping policy internals.
-- **No secret in argv.** Credentials move through an env injection the card named.
+- **No secret in argv or env.** A credential value never becomes a tool argument or a child environment variable.
 
 ## Interaction modes
 
