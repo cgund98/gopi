@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cgund98/gopi/internal/sandbox"
-	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
 
 func TestShellRejectsWiderProfileAndOutsideCwd(t *testing.T) {
@@ -243,9 +242,6 @@ func TestUnsandboxedRequiresApprovalAndSkipsSeatbelt(t *testing.T) {
 	if !decision.Required || !strings.Contains(decision.Reason, "Profile: sandbox -> unsandboxed") {
 		t.Fatalf("decision = %#v", decision)
 	}
-	if strings.Contains(string(tool.Parameters()), "secret_names") {
-		t.Fatal("secret_names is visible to the model")
-	}
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
 	t.Setenv("GOPI_PARENT_MARKER", "parent-secret")
 	var saw sandbox.Profile
@@ -278,6 +274,30 @@ func TestUnsandboxedRequiresApprovalAndSkipsSeatbelt(t *testing.T) {
 	}
 	if !containsOutput(raw, "ok") {
 		t.Fatalf("result = %s", raw)
+	}
+}
+
+func TestShellIgnoresStaleSecretNamesArgument(t *testing.T) {
+	root := openTemp(t)
+	tool := &Shell{Root: root, HomeDir: t.TempDir()}
+	var env []string
+	orig := launchCommand
+	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
+		env = profile.Env
+		return sandbox.Result{Stdout: "ok\n"}, nil
+	}
+	defer func() { launchCommand = orig }()
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN","DEEPSEEK_API_KEY"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsOutput(raw, "ok") {
+		t.Fatalf("result = %s", raw)
+	}
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "DEPLOY_TOKEN=") || strings.HasPrefix(entry, "DEEPSEEK_API_KEY=") {
+			t.Fatalf("stale secret_names injected a value: %s", entry)
+		}
 	}
 }
 
@@ -315,59 +335,6 @@ func TestSeatbeltFailureDoesNotRetryUnsandboxed(t *testing.T) {
 	}
 	if strings.Contains(sandboxedEnv, "HOME=") {
 		t.Fatalf("sandboxed env = %s", sandboxedEnv)
-	}
-}
-
-func TestSecretInjectionStaysOutOfResultAndAudit(t *testing.T) {
-	root := openTemp(t)
-	home := t.TempDir()
-	const secret = "token-value-xyz"
-	tool := &Shell{Root: root, HomeDir: home, Secrets: map[string]string{"DEPLOY_TOKEN": secret, gopisecrets.OpenAIAPIKey: "sk-host"}}
-	orig := launchCommand
-	launchCommand = func(_ context.Context, profile sandbox.Profile) (sandbox.Result, error) {
-		value := ""
-		for _, entry := range profile.Env {
-			if strings.HasPrefix(entry, "DEPLOY_TOKEN=") {
-				value = strings.TrimPrefix(entry, "DEPLOY_TOKEN=")
-			}
-			if strings.Contains(entry, "sk-host") {
-				t.Errorf("host key injected: %s", entry)
-			}
-		}
-		return sandbox.Result{Stdout: value}, nil
-	}
-	defer func() { launchCommand = orig }()
-	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN","`+gopisecrets.OpenAIAPIKey+`"]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrapped := WrapRedacting(tool, func(text string) string {
-		return strings.ReplaceAll(text, secret, "[redacted]")
-	})
-	redacted, err := wrapped.Execute(context.Background(), json.RawMessage(`{"command":"printf x","profile":"unsandboxed","secret_names":["DEPLOY_TOKEN"]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(redacted), secret) {
-		t.Fatalf("result leaked secret: %s", redacted)
-	}
-	if !strings.Contains(string(raw), secret) {
-		t.Fatal("child environment did not receive the secret")
-	}
-	audit, err := os.ReadFile(filepath.Join(home, "audit.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(audit), secret) || !strings.Contains(string(audit), "secrets=DEPLOY_TOKEN") {
-		t.Fatalf("audit = %s", audit)
-	}
-}
-
-func TestShellDropsHostOnlySecrets(t *testing.T) {
-	secrets := map[string]string{"gcal_token": "x", "DEPLOY_TOKEN": "y"}
-	got := injectedSecretNames(secrets, []string{"gcal_token", "DEPLOY_TOKEN"}, []string{"gcal_token"})
-	if len(got) != 1 || got[0] != "DEPLOY_TOKEN" {
-		t.Fatalf("injected = %#v", got)
 	}
 }
 

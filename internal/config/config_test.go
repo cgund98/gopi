@@ -10,7 +10,7 @@ import (
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("GOPI_HOME", t.TempDir())
-	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 
 	dir, err := HomeDir()
 	if err != nil {
@@ -23,8 +23,11 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Model != "gpt-5.6-terra" {
+	if cfg.Model != "deepseek/deepseek-flash" {
 		t.Fatalf("model = %q", cfg.Model)
+	}
+	if cfg.Effort != "none" {
+		t.Fatalf("effort = %q", cfg.Effort)
 	}
 	if cfg.MaxIterations != 10 {
 		t.Fatalf("max iterations = %d", cfg.MaxIterations)
@@ -32,8 +35,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.UserPrompt != "" {
 		t.Fatalf("user prompt = %q", cfg.UserPrompt)
 	}
-	if cfg.OpenAIAPIKey != "test-key" {
-		t.Fatalf("api key = %q", cfg.OpenAIAPIKey)
+	if cfg.DeepSeekAPIKey != "test-key" {
+		t.Fatalf("deepseek api key = %q", cfg.DeepSeekAPIKey)
 	}
 	if cfg.Network != "deny" {
 		t.Fatalf("network = %q", cfg.Network)
@@ -48,6 +51,7 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadSystemPromptFile(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -66,6 +70,7 @@ func TestLoadSystemPromptFile(t *testing.T) {
 
 func TestLoadNetworkAllowlist(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -167,5 +172,65 @@ func TestLoadKimiOnlySkipsOpenAIKey(t *testing.T) {
 	}
 	if cfg.OpenAIAPIKey != "" || cfg.Model != "kimi/kimi-k2.6" {
 		t.Fatalf("cfg model %q key %q", cfg.Model, cfg.OpenAIAPIKey)
+	}
+}
+
+func TestLoadEffortConfig(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+model = "gpt-4o"
+effort = "high"
+
+[efforts]
+agent = "none"
+plan = "low"
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Effort != "high" {
+		t.Fatalf("effort = %q", cfg.Effort)
+	}
+	if cfg.EffortFor("agent") != "none" {
+		t.Fatalf("agent effort = %q", cfg.EffortFor("agent"))
+	}
+	if cfg.EffortFor("ask") != "high" {
+		t.Fatalf("ask effort = %q", cfg.EffortFor("ask"))
+	}
+	if cfg.EffortFor("plan") != "low" {
+		t.Fatalf("plan effort = %q", cfg.EffortFor("plan"))
+	}
+}
+
+func TestLoadDeepSeekModelRequiresKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("model = \"deepseek/deepseek-flash\"\n")
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected deepseek key required")
+	}
+	t.Setenv("DEEPSEEK_API_KEY", "ds-key")
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DeepSeekAPIKey != "ds-key" || cfg.Model != "deepseek/deepseek-flash" {
+		t.Fatalf("cfg model %q key %q", cfg.Model, cfg.DeepSeekAPIKey)
 	}
 }

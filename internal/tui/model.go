@@ -52,17 +52,20 @@ type chatModel struct {
 	mouseOff         bool
 	err              error
 	modelName        string
+	effortName       string
 	workspacePath    string
 	systemPrompt     string
 	mode             app.Mode
 	switchMode       func(app.Mode) error
 	setModel         func(string) error
+	setEffort        func(string) error
 	summarize        func(context.Context, string) (gogent.Message, error)
 	prepareBuild     func() error
 	tasks            *tools.TaskList
 	taskEpoch        int
 	taskSeed         []tools.Task
 	modelOverrides   map[string]string
+	effortOverrides  map[string]string
 	completeOpen     bool
 	completeIndex    int
 	completeItems    []completion
@@ -102,8 +105,6 @@ type chatModel struct {
 	reviewScroll     int
 	reviewErr        string
 	forgetEdit       func(string)
-	secretNames      []string
-	secretSelected   map[string]map[string]bool
 
 	width  int
 	height int
@@ -674,6 +675,18 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.handleModel(text)
 			return m, nil
 		}
+		if strings.HasPrefix(text, "/effort") {
+			m.input.SetValue("")
+			m.completeOpen = false
+			m.handleEffort(text)
+			return m, nil
+		}
+		if strings.HasPrefix(text, "/allowpath ") {
+			m.input.SetValue("")
+			m.completeOpen = false
+			m.handleAllowPath(text)
+			return m, nil
+		}
 		if mode, command, ok := app.ParseModeCommand(text); command {
 			m.input.SetValue("")
 			if m.busy || m.inApprovalMode() {
@@ -941,7 +954,7 @@ func (m *chatModel) View() string {
 	if !m.busy && !m.inApprovalMode() {
 		usage = formatUsageStatus(m.modelName, m.messages)
 	}
-	b.WriteString(renderStatusSuffix(m.modelName, m.workspacePath, usage, contextPercent(m.modelName, m.systemPrompt, m.messages, m.input.Value()), m.busy, m.thinkingLabel(), m.width))
+	b.WriteString(renderStatusSuffix(m.modelName, m.effortName, m.workspacePath, usage, contextPercent(m.modelName, m.systemPrompt, m.messages, m.input.Value()), m.busy, m.thinkingLabel(), m.width))
 
 	return b.String()
 }
@@ -964,12 +977,16 @@ func renderBusyLine(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-func renderStatusSuffix(model, workspace, usage string, contextPct int, thinking bool, thought string, width int) string {
+func renderStatusSuffix(model, effort, workspace, usage string, contextPct int, thinking bool, thought string, width int) string {
 	if model == "" {
 		model = "model"
 	}
+	label := model
+	if effort != "" {
+		label += " (" + effort + ")"
+	}
 	left := displayWorkspace(workspace)
-	right := fmt.Sprintf("%s | %d%%", model, contextPct)
+	right := fmt.Sprintf("%s | %d%%", label, contextPct)
 	if usage != "" {
 		right += " | " + usage
 	}

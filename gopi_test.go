@@ -31,7 +31,7 @@ func collect(opts ...Option) options {
 	return o
 }
 
-func TestBuildToolsReadsSecretsAndClaimsNames(t *testing.T) {
+func TestBuildToolsReadsSecrets(t *testing.T) {
 	cfg := config.Config{
 		Secrets:     map[string]string{"gcal_token": `{"refresh_token":"r"}`, "jira": "j", "unused": "u"},
 		SecretFiles: map[string]string{"gcal_token": "/secrets/gcal_token.json"},
@@ -60,7 +60,7 @@ func TestBuildToolsReadsSecretsAndClaimsNames(t *testing.T) {
 			return stubTool{name: "jira", token: jira}, err
 		}),
 	)
-	tools, claimed, err := buildTools(cfg, "/work", o)
+	tools, err := buildTools(cfg, "/work", o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +73,6 @@ func TestBuildToolsReadsSecretsAndClaimsNames(t *testing.T) {
 	if path != "/secrets/gcal_token.json" {
 		t.Fatalf("path = %q", path)
 	}
-	if strings.Join(claimed, ",") != "gcal_token,jira" {
-		t.Fatalf("claimed = %#v", claimed)
-	}
 }
 
 func TestBuildToolsFailsOnMissingSecret(t *testing.T) {
@@ -85,7 +82,7 @@ func TestBuildToolsFailsOnMissingSecret(t *testing.T) {
 		}
 		return stubTool{name: "calendar"}, nil
 	}))
-	_, _, err := buildTools(config.Config{Secrets: map[string]string{}}, "/work", o)
+	_, err := buildTools(config.Config{Secrets: map[string]string{}}, "/work", o)
 	if err == nil || !strings.Contains(err.Error(), "secret gcal_token is missing from ~/.gopi/secrets.toml") {
 		t.Fatalf("err = %v", err)
 	}

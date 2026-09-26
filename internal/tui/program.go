@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cgund98/gopi/internal/app"
-	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	sess "github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/tools"
 	"github.com/cgund98/gopi/internal/trust"
@@ -121,7 +120,9 @@ func (m *programModel) bindChat(session *app.Session) {
 	m.chat.renderers = safeRenderers(session.Renderers, session.Redact)
 	m.chat.subagent = session.Subagent
 	m.chat.modelName = session.ActiveModel()
+	m.chat.effortName = session.ActiveEffort()
 	m.chat.modelOverrides = session.ModelOverrides()
+	m.chat.effortOverrides = session.EffortOverrides()
 	m.chat.workspacePath = session.Root.Path
 	m.chat.readGrants = session.Grants
 	m.chat.mode = session.Mode
@@ -136,6 +137,7 @@ func (m *programModel) bindChat(session *app.Session) {
 			m.chat.systemPrompt = m.session.Model.SystemPrompt()
 		}
 		m.chat.modelName = m.session.ActiveModel()
+		m.chat.effortName = m.session.ActiveEffort()
 		m.chat.modelOverrides = m.session.ModelOverrides()
 		return nil
 	}
@@ -149,7 +151,16 @@ func (m *programModel) bindChat(session *app.Session) {
 			m.chat.systemPrompt = m.session.Model.SystemPrompt()
 		}
 		m.chat.modelName = m.session.ActiveModel()
+		m.chat.effortName = m.session.ActiveEffort()
 		m.chat.modelOverrides = m.session.ModelOverrides()
+		return nil
+	}
+	m.chat.setEffort = func(effort string) error {
+		if err := m.session.SetEffort(effort); err != nil {
+			return err
+		}
+		m.chat.effortName = m.session.ActiveEffort()
+		m.chat.effortOverrides = m.session.EffortOverrides()
 		return nil
 	}
 	m.chat.summarize = m.session.Summarize
@@ -164,6 +175,8 @@ func (m *programModel) bindChat(session *app.Session) {
 		}
 		m.chat.modelName = m.session.ActiveModel()
 		m.chat.modelOverrides = m.session.ModelOverrides()
+		m.chat.effortName = m.session.ActiveEffort()
+		m.chat.effortOverrides = m.session.EffortOverrides()
 		m.chat.mode = app.ModeAgent
 		m.chat.input.Prompt = modePrompt(app.ModeAgent)
 		return nil
@@ -171,7 +184,6 @@ func (m *programModel) bindChat(session *app.Session) {
 	if session.Model != nil {
 		m.chat.systemPrompt = session.Model.SystemPrompt()
 	}
-	m.chat.secretNames = gopisecrets.OfferNames(session.Config.Secrets, session.Config.HostOnly...)
 	m.chat.tasks = session.Tasks
 	m.chat.taskEpoch = 0
 	m.chat.taskSeed = nil
@@ -433,6 +445,7 @@ func loadSavedChat(next *app.Session, file sess.File) error {
 
 func applySavedMode(session *app.Session, file sess.File) error {
 	session.SetModelOverrides(file.Models)
+	session.SetEffortOverrides(file.Efforts)
 	target := session.Mode
 	if file.Mode != "" {
 		target = app.Mode(file.Mode)
@@ -444,7 +457,13 @@ func applySavedMode(session *app.Session, file sess.File) error {
 	if want == "" {
 		want = session.Config.ModelFor(string(target))
 	}
-	if target == session.Mode && want == session.ActiveModel() {
+	wantEffort := session.Config.EffortFor(string(target))
+	if file.Efforts != nil {
+		if effort := file.Efforts[string(target)]; effort != "" {
+			wantEffort = effort
+		}
+	}
+	if target == session.Mode && want == session.ActiveModel() && wantEffort == session.ActiveEffort() {
 		return nil
 	}
 	return session.SetMode(target)

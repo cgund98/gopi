@@ -18,7 +18,7 @@ const (
 	dirName          = ".gopi"
 	configFileName   = "config.toml"
 	systemPromptFile = "system.md"
-	defaultModel     = "gpt-5.6-terra"
+	defaultModel     = "deepseek/deepseek-flash"
 	defaultMaxIter   = 10
 	homeDirEnv       = "GOPI_HOME"
 	requiredDirMode  = os.FileMode(0o700)
@@ -30,6 +30,8 @@ const (
 type File struct {
 	Model         string           `toml:"model"`
 	Models        ModelsFile       `toml:"models"`
+	Effort        string           `toml:"effort"`
+	Efforts       EffortsFile      `toml:"efforts"`
 	MaxIterations int              `toml:"max_iterations"`
 	Sandbox       SandboxFile      `toml:"sandbox"`
 	Instructions  InstructionsFile `toml:"instructions"`
@@ -38,6 +40,14 @@ type File struct {
 
 // ModelsFile is the optional [models] table. Empty keys fall back to model.
 type ModelsFile struct {
+	Agent string `toml:"agent"`
+	Ask   string `toml:"ask"`
+	Plan  string `toml:"plan"`
+	Build string `toml:"build"`
+}
+
+// EffortsFile is the optional [effort] table. Empty keys fall back to effort.
+type EffortsFile struct {
 	Agent string `toml:"agent"`
 	Ask   string `toml:"ask"`
 	Plan  string `toml:"plan"`
@@ -73,14 +83,19 @@ type Config struct {
 	AskModel           string
 	PlanModel          string
 	BuildModel         string
+	Effort             string
+	AgentEffort        string
+	AskEffort          string
+	PlanEffort         string
+	BuildEffort        string
 	MaxIterations      int
 	SystemPrompt       string
 	OpenAIAPIKey       string
 	KimiAPIKey         string
+	DeepSeekAPIKey     string
 	HomeDir            string
 	Secrets            map[string]string
 	SecretFiles        map[string]string
-	HostOnly           []string
 	Network            string
 	AllowHosts         []string
 	DenyHosts          []string
@@ -92,8 +107,9 @@ type Config struct {
 }
 
 type envSecrets struct {
-	OpenAIAPIKey string `envconfig:"OPENAI_API_KEY"`
-	KimiAPIKey   string `envconfig:"KIMI_API_KEY"`
+	OpenAIAPIKey   string `envconfig:"OPENAI_API_KEY"`
+	KimiAPIKey     string `envconfig:"KIMI_API_KEY"`
+	DeepSeekAPIKey string `envconfig:"DEEPSEEK_API_KEY"`
 }
 
 // HomeDir returns the gopi configuration directory.
@@ -151,6 +167,9 @@ func Load(dir string) (Config, error) {
 	if file.Model == "" {
 		file.Model = defaultModel
 	}
+	if file.Effort == "" {
+		file.Effort = "none"
+	}
 	if file.MaxIterations <= 0 {
 		file.MaxIterations = defaultMaxIter
 	}
@@ -183,11 +202,16 @@ func Load(dir string) (Config, error) {
 	if broker[gopisecrets.KimiAPIKey] != "" {
 		kimiKey = broker[gopisecrets.KimiAPIKey]
 	}
+	deepseekKey := secrets.DeepSeekAPIKey
+	if broker[gopisecrets.DeepSeekAPIKey] != "" {
+		deepseekKey = broker[gopisecrets.DeepSeekAPIKey]
+	}
 	resolved, err := resolveModels(file)
 	if err != nil {
 		return Config{}, err
 	}
-	if err := requireKeys(resolved, apiKey, kimiKey); err != nil {
+	resolvedEfforts := resolveEfforts(file)
+	if err := requireKeys(resolved, apiKey, kimiKey, deepseekKey); err != nil {
 		return Config{}, err
 	}
 	endpoint := strings.TrimSpace(file.Search.Endpoint)
@@ -201,10 +225,16 @@ func Load(dir string) (Config, error) {
 		AskModel:           resolved.ask,
 		PlanModel:          resolved.plan,
 		BuildModel:         resolved.build,
+		Effort:             resolvedEfforts.fallback,
+		AgentEffort:        resolvedEfforts.agent,
+		AskEffort:          resolvedEfforts.ask,
+		PlanEffort:         resolvedEfforts.plan,
+		BuildEffort:        resolvedEfforts.build,
 		MaxIterations:      file.MaxIterations,
 		SystemPrompt:       "",
 		OpenAIAPIKey:       apiKey,
 		KimiAPIKey:         kimiKey,
+		DeepSeekAPIKey:     deepseekKey,
 		HomeDir:            dir,
 		Secrets:            broker,
 		SecretFiles:        secretFiles,
@@ -309,9 +339,9 @@ func pickModel(override, fallback string) (string, error) {
 	return name, nil
 }
 
-func requireKeys(resolved resolvedModels, openaiKey, kimiKey string) error {
+func requireKeys(resolved resolvedModels, openaiKey, kimiKey, deepseekKey string) error {
 	names := []string{resolved.fallback, resolved.agent, resolved.ask, resolved.plan, resolved.build}
-	var needOpenAI, needKimi bool
+	var needOpenAI, needKimi, needDeepSeek bool
 	for _, name := range names {
 		if name == "" {
 			continue
@@ -325,6 +355,8 @@ func requireKeys(resolved resolvedModels, openaiKey, kimiKey string) error {
 			needOpenAI = true
 		case models.ProviderKimi:
 			needKimi = true
+		case models.ProviderDeepSeek:
+			needDeepSeek = true
 		}
 	}
 	if needOpenAI && openaiKey == "" {
@@ -332,6 +364,9 @@ func requireKeys(resolved resolvedModels, openaiKey, kimiKey string) error {
 	}
 	if needKimi && kimiKey == "" {
 		return fmt.Errorf("%s is required", gopisecrets.KimiAPIKey)
+	}
+	if needDeepSeek && deepseekKey == "" {
+		return fmt.Errorf("%s is required", gopisecrets.DeepSeekAPIKey)
 	}
 	return nil
 }
@@ -356,12 +391,64 @@ func (c Config) ModelFor(mode string) string {
 	return defaultModel
 }
 
+// EffortFor returns the resolved effort for agent, ask, or plan.
+func (c Config) EffortFor(mode string) string {
+	var override string
+	switch mode {
+	case "agent":
+		override = c.AgentEffort
+	case "ask":
+		override = c.AskEffort
+	case "plan":
+		override = c.PlanEffort
+	}
+	if override != "" {
+		return override
+	}
+	return c.Effort
+}
+
 // BuildModelName returns the model used by the plan build key.
 func (c Config) BuildModelName() string {
 	if c.BuildModel != "" {
 		return c.BuildModel
 	}
 	return c.ModelFor("agent")
+}
+
+// BuildEffortName returns the effort used by the plan build key.
+func (c Config) BuildEffortName() string {
+	if c.BuildEffort != "" {
+		return c.BuildEffort
+	}
+	return c.EffortFor("plan")
+}
+
+type resolvedEfforts struct {
+	fallback string
+	agent    string
+	ask      string
+	plan     string
+	build    string
+}
+
+func resolveEfforts(file File) resolvedEfforts {
+	fallback := strings.TrimSpace(file.Effort)
+	return resolvedEfforts{
+		fallback: fallback,
+		agent:    pickEffort(file.Efforts.Agent, fallback),
+		ask:      pickEffort(file.Efforts.Ask, fallback),
+		plan:     pickEffort(file.Efforts.Plan, fallback),
+		build:    pickEffort(file.Efforts.Build, fallback),
+	}
+}
+
+func pickEffort(override, fallback string) string {
+	name := strings.TrimSpace(override)
+	if name == "" {
+		name = fallback
+	}
+	return name
 }
 
 func loadSecrets() (envSecrets, error) {

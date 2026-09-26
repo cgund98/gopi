@@ -14,7 +14,6 @@ import (
 
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/sandbox"
-	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
@@ -22,7 +21,6 @@ type shellArgs struct {
 	Command      string   `json:"command" jsonschema:"description=Shell command to run inside the sandbox"`
 	Cwd          string   `json:"cwd,omitempty" jsonschema:"description=Working directory relative to the workspace"`
 	Profile      string   `json:"profile,omitempty" jsonschema:"description=sandbox, extra_paths when read_paths or write_paths is set, or unsandboxed to run without Seatbelt after the user approves"`
-	SecretNames  []string `json:"secret_names,omitempty" jsonschema:"-"`
 	ReadPaths    []string `json:"read_paths,omitempty" jsonschema:"description=Extra files or directories to read. The user must approve the call."`
 	WritePaths   []string `json:"write_paths,omitempty" jsonschema:"description=Extra files or directories to write. The user must approve the call."`
 	NetworkHosts []string `json:"network_hosts,omitempty" jsonschema:"description=Extra hosts this command may reach through the proxy. The user must approve the call."`
@@ -36,18 +34,15 @@ type Shell struct {
 	Network    string
 	AllowHosts []string
 	DenyHosts  []string
-	Secrets    map[string]string
 	Grants     *ReadGrants
 	// SecretFiles are files secrets.toml references; the sandbox denies them.
 	SecretFiles []string
-	// HostOnly names secrets claimed by custom tools; they are never injected.
-	HostOnly []string
 }
 
 func (t *Shell) Name() string { return "shell" }
 
 func (t *Shell) Description() string {
-	return "Run a command in the workspace sandbox. Keep the command simple. If it needs one or two paths outside the workspace, set read_paths or write_paths instead of working around the sandbox. If it needs more than two or three, set profile to unsandboxed instead of listing them. Directories granted with grant_read are already readable; do not repeat them in read_paths. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths when there are only a few, or with profile unsandboxed when there are more. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Those calls ask the user for approval and do not run until they approve. The user chooses any secret env names on the approval card."
+	return "Run a command in the workspace sandbox. Keep the command simple. If it needs one or two paths outside the workspace, set read_paths or write_paths instead of working around the sandbox. If it needs more than two or three, set profile to unsandboxed instead of listing them. Directories granted with grant_read are already readable; do not repeat them in read_paths. Network is denied unless the user configured an allowlist. If the result says the sandbox blocked a file, call shell again with read_paths or write_paths when there are only a few, or with profile unsandboxed when there are more. If it says network is denied, call shell again with network_hosts or network set to unrestricted. Those calls ask the user for approval and do not run until they approve."
 }
 
 func (t *Shell) Parameters() json.RawMessage { return schemaFor(new(shellArgs)) }
@@ -135,8 +130,6 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	defer func() { _ = os.RemoveAll(tmp) }()
 
 	env := sandbox.ScrubbedEnv(tmp)
-	injected := injectedSecretNames(t.Secrets, args.SecretNames, t.HostOnly)
-	env = append(env, injectedEnv(t.Secrets, injected)...)
 	network := sandbox.NetworkDeny
 	var ports []int
 	if args.Network == sandbox.NetworkUnrestricted {
@@ -185,10 +178,10 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 	}
 	result, err := launchCommand(ctx, profile)
 	if err != nil {
-		t.audit(command, cwd, profileName, "failed", result.ExitCode, time.Since(started), injected)
+		t.audit(command, cwd, profileName, "failed", result.ExitCode, time.Since(started))
 		return nil, err
 	}
-	t.audit(command, cwd, profileName, "ran", result.ExitCode, time.Since(started), injected)
+	t.audit(command, cwd, profileName, "ran", result.ExitCode, time.Since(started))
 	payload := map[string]any{
 		"exit_code": result.ExitCode,
 		"stdout":    result.Stdout,
@@ -304,16 +297,12 @@ func grantReason(reads, writes []string) string {
 	return "Elevated file access: " + strings.Join(parts, "; ")
 }
 
-func (t *Shell) audit(command, cwd, profileName, decision string, exitCode int, duration time.Duration, secrets ...[]string) {
+func (t *Shell) audit(command, cwd, profileName, decision string, exitCode int, duration time.Duration) {
 	if t.HomeDir == "" {
 		return
 	}
-	names := ""
-	if len(secrets) > 0 && len(secrets[0]) > 0 {
-		names = " secrets=" + strings.Join(secrets[0], ",")
-	}
-	line := fmt.Sprintf("%s tool=shell command=%q cwd=%q profile=%s decision=%s exit=%d duration=%s%s\n",
-		time.Now().UTC().Format(time.RFC3339), command, cwd, profileName, decision, exitCode, duration.Round(time.Millisecond), names)
+	line := fmt.Sprintf("%s tool=shell command=%q cwd=%q profile=%s decision=%s exit=%d duration=%s\n",
+		time.Now().UTC().Format(time.RFC3339), command, cwd, profileName, decision, exitCode, duration.Round(time.Millisecond))
 	f, err := os.OpenFile(t.HomeDir+"/audit.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
@@ -330,33 +319,6 @@ func sessionReads(grants *ReadGrants, unsandboxed bool) []string {
 }
 
 var launchCommand = sandbox.Launch
-
-func injectedSecretNames(secrets map[string]string, requested, hostOnly []string) []string {
-	var names []string
-	seen := map[string]bool{}
-	for _, name := range requested {
-		if seen[name] || strings.ContainsAny(name, "=\n\r") {
-			continue
-		}
-		seen[name] = true
-		if gopisecrets.HostOnly(name, hostOnly...) {
-			continue
-		}
-		if _, ok := secrets[name]; !ok {
-			continue
-		}
-		names = append(names, name)
-	}
-	return names
-}
-
-func injectedEnv(secrets map[string]string, names []string) []string {
-	env := make([]string, 0, len(names))
-	for _, name := range names {
-		env = append(env, name+"="+secrets[name])
-	}
-	return env
-}
 
 func homeDir() string {
 	home, err := os.UserHomeDir()

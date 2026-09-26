@@ -99,22 +99,3 @@ func TestRedactorCoversJSONCredentialFields(t *testing.T) {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
 }
-
-func TestOfferNamesHidesClaimedNames(t *testing.T) {
-	names := OfferNames(map[string]string{"gcal_token": "x", "DEPLOY_TOKEN": "y"}, "gcal_token")
-	if len(names) != 1 || names[0] != "DEPLOY_TOKEN" {
-		t.Fatalf("names = %#v", names)
-	}
-}
-
-func TestOfferNamesHidesHostKeys(t *testing.T) {
-	names := OfferNames(map[string]string{
-		OpenAIAPIKey:   "sk",
-		KimiAPIKey:     "kimi",
-		SearchAPIKey:   "brave",
-		"DEPLOY_TOKEN": "token",
-	})
-	if len(names) != 1 || names[0] != "DEPLOY_TOKEN" {
-		t.Fatalf("names = %#v", names)
-	}
-}

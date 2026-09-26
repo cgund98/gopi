@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -14,25 +13,11 @@ import (
 const fileName = "secrets.toml"
 
 const (
-	OpenAIAPIKey = "openai_api_key"
-	KimiAPIKey   = "kimi_api_key"
-	SearchAPIKey = "search_api_key"
+	OpenAIAPIKey   = "openai_api_key"
+	KimiAPIKey     = "kimi_api_key"
+	DeepSeekAPIKey = "deepseek_api_key"
+	SearchAPIKey   = "search_api_key"
 )
-
-// HostOnly reports keys that stay on the host and are never offered to shell.
-// extra adds names claimed by custom tool factories.
-func HostOnly(name string, extra ...string) bool {
-	switch name {
-	case OpenAIAPIKey, KimiAPIKey, SearchAPIKey:
-		return true
-	}
-	for _, claimed := range extra {
-		if claimed == name {
-			return true
-		}
-	}
-	return false
-}
 
 // Load reads ~/.gopi/secrets.toml. A missing file yields empty maps.
 // A group- or world-readable file is refused. An entry is a string, or a table
@@ -111,20 +96,6 @@ func readSecretFile(ref string) (value, canonical string, err error) {
 		return "", "", err
 	}
 	return strings.TrimRight(string(body), "\r\n"), canonical, nil
-}
-
-// OfferNames lists broker keys the user can attach to a shell call.
-// Host-only keys, including extra names claimed by tool factories, are omitted.
-func OfferNames(values map[string]string, extra ...string) []string {
-	names := make([]string, 0, len(values))
-	for name := range values {
-		if HostOnly(name, extra...) {
-			continue
-		}
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // Redactor replaces known secret values and common token shapes.

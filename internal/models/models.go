@@ -7,17 +7,14 @@ import (
 )
 
 const (
-	ProviderOpenAI = "openai"
-	ProviderKimi   = "kimi"
+	ProviderOpenAI   = "openai"
+	ProviderKimi     = "kimi"
+	ProviderDeepSeek = "deepseek"
 )
-
-// noThinkSuffix names a Kimi model that is sent with thinking disabled.
-const noThinkSuffix = "-nothink"
 
 // Model describes one supported model.
 type Model struct {
 	Provider         string
-	DisableThinking  bool
 	ContextWindow    int
 	InputPerMillion  float64
 	CachedPerMillion float64
@@ -63,12 +60,18 @@ var supported = map[string]Model{
 		CachedPerMillion: 0.16,
 		OutputPerMillion: 4,
 	},
-	"kimi/kimi-k2.6" + noThinkSuffix: {
-		Provider:         ProviderKimi,
-		DisableThinking:  true,
+	"deepseek/deepseek-flash": {
+		Provider:         ProviderDeepSeek,
 		ContextWindow:    262144,
-		InputPerMillion:  0.95,
-		CachedPerMillion: 0.16,
+		InputPerMillion:  0.50,
+		CachedPerMillion: 0.10,
+		OutputPerMillion: 2,
+	},
+	"deepseek/deepseek-v3": {
+		Provider:         ProviderDeepSeek,
+		ContextWindow:    262144,
+		InputPerMillion:  0.90,
+		CachedPerMillion: 0.18,
 		OutputPerMillion: 4,
 	},
 }
@@ -111,22 +114,23 @@ func EstimateCost(name string, input, output, cached int) (dollars float64, ok b
 	return dollars, true
 }
 
-// Parse checks the whitelist and strips the kimi/ prefix and -nothink suffix from the wire model id.
+// Parse checks the whitelist and strips the provider prefix from the wire model id.
 func Parse(name string) (provider, modelID string, err error) {
 	name = strings.TrimSpace(name)
 	model, ok := supported[name]
 	if !ok {
 		return "", "", fmt.Errorf("unsupported model %q", name)
 	}
-	if model.Provider == ProviderKimi {
+	switch model.Provider {
+	case ProviderKimi:
 		modelID = strings.TrimPrefix(name, "kimi/")
-		if model.DisableThinking {
-			modelID = strings.TrimSuffix(modelID, noThinkSuffix)
+	case ProviderDeepSeek:
+		modelID = strings.TrimPrefix(name, "deepseek/")
+	default:
+		if strings.Contains(name, "/") {
+			return "", "", fmt.Errorf("unknown provider in %q", name)
 		}
-		return model.Provider, modelID, nil
+		modelID = name
 	}
-	if strings.Contains(name, "/") {
-		return "", "", fmt.Errorf("unknown provider in %q", name)
-	}
-	return model.Provider, name, nil
+	return model.Provider, modelID, nil
 }

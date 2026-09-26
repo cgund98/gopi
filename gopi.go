@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 
 	"github.com/cgund98/gogent"
 
@@ -61,18 +60,15 @@ type ToolEnv struct {
 
 	secrets map[string]string
 	files   map[string]string
-	used    map[string]bool
 }
 
 // Secret returns a value from ~/.gopi/secrets.toml, or the contents of the file
-// it references. A missing name is an error, and the name becomes host-only:
-// shell calls can never receive it.
+// it references. A missing name is an error.
 func (e ToolEnv) Secret(name string) (string, error) {
 	value, ok := e.secrets[name]
 	if !ok {
 		return "", fmt.Errorf("secret %s is missing from ~/.gopi/secrets.toml", name)
 	}
-	e.used[name] = true
 	return value, nil
 }
 
@@ -86,7 +82,6 @@ func (e ToolEnv) SecretPath(name string) (string, error) {
 		}
 		return "", fmt.Errorf("secret %s is missing from ~/.gopi/secrets.toml", name)
 	}
-	e.used[name] = true
 	return path, nil
 }
 
@@ -99,30 +94,24 @@ func WithToolFactory(mode Mode, factory func(ToolEnv) (gogent.Tool, error)) Opti
 	}
 }
 
-// buildTools runs the factories and returns every custom tool by mode, plus the
-// secret names the factories read.
-func buildTools(cfg config.Config, workspacePath string, o options) (map[Mode][]gogent.Tool, []string, error) {
+// buildTools runs the factories and returns every custom tool by mode.
+func buildTools(cfg config.Config, workspacePath string, o options) (map[Mode][]gogent.Tool, error) {
 	out := map[Mode][]gogent.Tool{}
 	for mode, list := range o.tools {
 		out[mode] = append(out[mode], list...)
 	}
-	env := ToolEnv{Workspace: workspacePath, secrets: cfg.Secrets, files: cfg.SecretFiles, used: map[string]bool{}}
+	env := ToolEnv{Workspace: workspacePath, secrets: cfg.Secrets, files: cfg.SecretFiles}
 	for _, factory := range o.factories {
 		tool, err := factory.build(env)
 		if err != nil {
-			return nil, nil, fmt.Errorf("build %s tool: %w", factory.mode, err)
+			return nil, fmt.Errorf("build %s tool: %w", factory.mode, err)
 		}
 		if tool == nil {
-			return nil, nil, fmt.Errorf("build %s tool: factory returned no tool", factory.mode)
+			return nil, fmt.Errorf("build %s tool: factory returned no tool", factory.mode)
 		}
 		out[factory.mode] = append(out[factory.mode], tool)
 	}
-	names := make([]string, 0, len(env.used))
-	for name := range env.used {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return out, names, nil
+	return out, nil
 }
 
 // WithWorkspace uses dir instead of the current directory.
@@ -193,11 +182,10 @@ func Run(ctx context.Context, opts ...Option) error {
 		return err
 	}
 
-	custom, hostOnly, err := buildTools(cfg, root.Path, options)
+	custom, err := buildTools(cfg, root.Path, options)
 	if err != nil {
 		return err
 	}
-	cfg.HostOnly = hostOnly
 
 	session, err := app.New(cfg, root, decisions.Lookup(root.Path), custom)
 	if err != nil {
