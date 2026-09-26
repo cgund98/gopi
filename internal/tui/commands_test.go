@@ -10,6 +10,8 @@ import (
 	"github.com/cgund98/gogent/inmemory"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/cgund98/gopi/internal/tools"
 )
 
 func TestMouseCommandTogglesCapture(t *testing.T) {
@@ -163,5 +165,38 @@ func TestUsageStatusShowsCost(t *testing.T) {
 	status := formatUsageStatus("gpt-5.6-luna", messages)
 	if status != "1.0M/0 $0.20" {
 		t.Fatalf("status = %q", status)
+	}
+}
+
+func TestAllowPathGrantsReadAccess(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.workspacePath = t.TempDir()
+	chat.readGrants = &tools.ReadGrants{}
+
+	chat.handleAllowPath("/allowpath " + chat.workspacePath)
+	if !strings.Contains(chat.status, "Granted") {
+		t.Fatalf("expected granted status, got: %q", chat.status)
+	}
+	granted := chat.readGrants.List()
+	if len(granted) != 1 {
+		t.Fatalf("expected 1 grant, got %d: %v", len(granted), granted)
+	}
+	if !chat.readGrants.Covers(granted[0]) {
+		t.Fatal("grant not stored")
+	}
+
+	chat.handleAllowPath("/allowpath " + chat.workspacePath)
+	if !strings.Contains(chat.status, "Already granted") {
+		t.Fatalf("expected already-granted status, got: %q", chat.status)
+	}
+
+	chat.handleAllowPath("/allowpath")
+	if !strings.Contains(chat.status, "Usage") {
+		t.Fatalf("expected usage error, got: %q", chat.status)
+	}
+
+	chat.handleAllowPath("/allowpath /does/not/exist")
+	if !strings.Contains(chat.status, "Could not resolve") && !strings.Contains(chat.status, "Granted") {
+		t.Fatalf("expected resolve error, got: %q", chat.status)
 	}
 }

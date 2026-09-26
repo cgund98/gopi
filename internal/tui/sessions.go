@@ -15,6 +15,7 @@ import (
 
 const helpText = `/agent, /ask, /plan, and /mode <name> switch the session mode
 /model <name> sets the model for the active mode
+/allowpath <path> grants read access outside the workspace for this chat
 /compact summarizes earlier turns
 /mouse [on|off] toggles mouse capture for text selection
 /sessions opens the saved-chat list

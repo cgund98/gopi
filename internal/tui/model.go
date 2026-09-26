@@ -674,6 +674,12 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.handleModel(text)
 			return m, nil
 		}
+		if strings.HasPrefix(text, "/allowpath ") {
+			m.input.SetValue("")
+			m.completeOpen = false
+			m.handleAllowPath(text)
+			return m, nil
+		}
 		if mode, command, ok := app.ParseModeCommand(text); command {
 			m.input.SetValue("")
 			if m.busy || m.inApprovalMode() {

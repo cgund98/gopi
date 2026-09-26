@@ -19,7 +19,6 @@ import (
 	"github.com/cgund98/gopi/internal/app"
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/models"
-	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 	"github.com/cgund98/gopi/internal/session"
 	"github.com/cgund98/gopi/internal/tools"
 	"github.com/cgund98/gopi/internal/trust"
@@ -669,41 +668,6 @@ func TestPersistWritesAfterFinishedRun(t *testing.T) {
 	loaded, err = store.Load(chat.chatID)
 	if err != nil || len(loaded.ReadGrants) != 1 || loaded.ReadGrants[0] != "/tmp/session-grant" {
 		t.Fatalf("grants = %#v err = %v", loaded.ReadGrants, err)
-	}
-}
-
-func TestSecretToggleWritesSelectedName(t *testing.T) {
-	store := inmemory.NewMessageStore()
-	chat := newChatModel(context.Background(), nil, store, gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
-	chat.secretNames = []string{"DEPLOY_TOKEN"}
-	message := gogent.NewAssistantMessageWithToolCalls("", []gogent.ToolCall{
-		gogent.NewPendingToolCall("call-1", "shell", json.RawMessage(`{"command":"echo hi","secret_names":["`+gopisecrets.OpenAIAPIKey+`"]}`)),
-	})
-	if err := store.AddMessages(context.Background(), chat.chatID, message); err != nil {
-		t.Fatal(err)
-	}
-	chat.pendingApprovals = []gogent.PendingToolCall{{
-		MessageID:  message.ID,
-		ToolCallID: "call-1",
-		ToolName:   "shell",
-	}}
-	chat.syncApprovalFocus()
-	view := stripANSI(chat.approvalList.View())
-	if strings.Contains(view, gopisecrets.OpenAIAPIKey) || !strings.Contains(view, "DEPLOY_TOKEN") {
-		t.Fatalf("approval list = %q", view)
-	}
-	chat.approvalList.Select(0)
-	chat.toggleSelectedSecret()
-	if err := chat.writeSecretNames(context.Background(), message.ID, "call-1", chat.selectedSecretNames("call-1")); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := store.GetMessage(context.Background(), chat.chatID, message.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := string(loaded.ToolCalls[0].Args)
-	if strings.Contains(args, gopisecrets.OpenAIAPIKey) || !strings.Contains(args, "DEPLOY_TOKEN") {
-		t.Fatalf("args = %s", args)
 	}
 }
 

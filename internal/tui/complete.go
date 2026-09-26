@@ -19,6 +19,7 @@ func composerCommands() []completion {
 		{insert: "/plan", label: "/plan", detail: "switch to Plan"},
 		{insert: "/mode", label: "/mode <name>", detail: "switch mode"},
 		{insert: "/model", label: "/model <name>", detail: "set the model for this mode"},
+		{insert: "/allowpath", label: "/allowpath <path>", detail: "grant read access outside workspace"},
 		{insert: "/compact", label: "/compact", detail: "summarize earlier turns"},
 		{insert: "/mouse", label: "/mouse [on|off]", detail: "toggle mouse capture"},
 		{insert: "/sessions", label: "/sessions", detail: "open saved chats"},
@@ -81,6 +82,8 @@ func completionsFor(text string) []completion {
 			items = append(items, completion{insert: "/model " + model, label: "/model " + model, detail: "model"})
 		}
 		return filterCompletions(items, arg)
+	case "/allowpath":
+		return nil
 	default:
 		return nil
 	}

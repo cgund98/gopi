@@ -76,6 +76,9 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust, Rules: rules}
 	plan := &tools.WritePlan{Root: root, Workspace: workspaceTrust}
 	grants := &tools.ReadGrants{}
+	for _, dir := range prompt.SkillRoots(promptOptions(cfg, root.Path, workspaceTrust)) {
+		grants.Add(dir)
+	}
 	read := []gogent.Tool{
 		&tools.ReadFile{Root: root, Rules: rules, Grants: grants},
 		&tools.Grep{Root: root, Rules: rules, Grants: grants},

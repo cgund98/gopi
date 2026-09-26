@@ -140,13 +140,19 @@ type skill struct {
 	Path        string
 }
 
-func skillCatalog(opts Options) (string, error) {
+// SkillRoots returns the directories that are searched for skills, in order.
+func SkillRoots(opts Options) []string {
 	var roots []string
 	roots = append(roots, filepath.Join(opts.HomeDir, "skills"))
 	roots = append(roots, opts.SkillDirs...)
 	if opts.Trusted {
 		roots = append(roots, filepath.Join(opts.Workspace, ".gopi", "skills"))
 	}
+	return roots
+}
+
+func skillCatalog(opts Options) (string, error) {
+	roots := SkillRoots(opts)
 	byName := map[string]skill{}
 	var order []string
 	for _, root := range roots {

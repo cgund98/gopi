@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/cgund98/gopi/internal/models"
+	"github.com/cgund98/gopi/internal/workspace"
 )
 
 type compactDoneMsg struct {
@@ -59,6 +60,35 @@ func (m *chatModel) handleMouse(text string) tea.Cmd {
 	}
 	m.status = "Mouse on: the wheel scrolls gopi; hold Option (iTerm) or Shift to select"
 	return tea.EnableMouseCellMotion
+}
+
+func (m *chatModel) handleAllowPath(text string) {
+	fields := strings.Fields(text)
+	if len(fields) < 2 {
+		m.status = "Usage: /allowpath <path>"
+		return
+	}
+	path := strings.TrimSpace(text[len("/allowpath "):])
+	if path == "" {
+		m.status = "Usage: /allowpath <path>"
+		return
+	}
+	root := workspace.Root{Path: m.workspacePath}
+	resolved, _, err := root.Canonical(path)
+	if err != nil {
+		m.status = "Could not resolve path: " + err.Error()
+		return
+	}
+	if m.readGrants == nil {
+		m.status = "Grants are unavailable"
+		return
+	}
+	if m.readGrants.Covers(resolved) {
+		m.status = "Already granted: " + resolved
+		return
+	}
+	m.readGrants.Add(resolved)
+	m.status = "Granted read access for the rest of this chat: " + resolved
 }
 
 func (m *chatModel) compact() tea.Cmd {

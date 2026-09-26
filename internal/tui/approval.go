@@ -17,7 +17,7 @@ const (
 	choiceReject  = "Reject"
 )
 
-const approvalHelpText = "↑/↓ select · space toggle secret · enter confirm · y approve · n reject"
+const approvalHelpText = "↑/↓ select · enter confirm · y approve · n reject"
 
 type approvalChoiceItem struct {
 	label  string
@@ -104,12 +104,6 @@ func (m *chatModel) syncApprovalFocus() {
 
 func (m *chatModel) refreshApprovalChoices() {
 	var items []list.Item
-	if pending, ok := m.currentPendingApproval(); ok && pending.ToolName == "shell" {
-		selected := m.secretSelected[pending.ToolCallID]
-		for _, name := range m.secretNames {
-			items = append(items, approvalChoiceItem{label: name, secret: true, on: selected[name]})
-		}
-	}
 	items = append(items,
 		approvalChoiceItem{label: choiceApprove},
 		approvalChoiceItem{label: choiceReject},
@@ -162,16 +156,9 @@ func renderApprovalPrompt(pending gogent.PendingToolCall, renderer toolview.Rend
 
 func (m *chatModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case " ":
-		m.toggleSelectedSecret()
-		return m, nil
 	case "enter":
 		item, ok := m.approvalList.SelectedItem().(approvalChoiceItem)
 		if !ok {
-			return m, nil
-		}
-		if item.secret {
-			m.toggleSelectedSecret()
 			return m, nil
 		}
 		return m, m.submitApprovalChoice(item.label)
