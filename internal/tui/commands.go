@@ -44,6 +44,39 @@ func (m *chatModel) handleModel(text string) {
 	m.status = "Model set to " + fields[1]
 }
 
+func (m *chatModel) handleEffort(text string) {
+	fields := strings.Fields(text)
+	if len(fields) == 1 {
+		m.status = "Effort levels: none, low, medium, high"
+		return
+	}
+	if len(fields) != 2 {
+		m.status = "Usage: /effort <none|low|medium|high>"
+		return
+	}
+	switch fields[1] {
+	case "none", "low", "medium", "high":
+	default:
+		m.status = "Usage: /effort <none|low|medium|high>"
+		return
+	}
+	if m.busy || m.inApprovalMode() {
+		m.status = "Finish the current turn before changing effort"
+		return
+	}
+	if m.setEffort == nil {
+		m.status = "Effort switch is unavailable"
+		return
+	}
+	if err := m.setEffort(fields[1]); err != nil {
+		m.err = err
+		m.status = err.Error()
+		return
+	}
+	m.err = nil
+	m.status = "Effort set to " + fields[1]
+}
+
 func (m *chatModel) handleMouse(text string) tea.Cmd {
 	fields := strings.Fields(text)
 	off := !m.mouseOff

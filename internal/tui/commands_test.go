@@ -56,6 +56,13 @@ func TestCompletionsFilterCommandsAndModels(t *testing.T) {
 	if !models["/model gpt-4o"] || !models["/model gpt-5.6-luna"] {
 		t.Fatalf("models = %#v", models)
 	}
+	efforts := map[string]bool{}
+	for _, item := range completionsFor("/effort ") {
+		efforts[item.label] = true
+	}
+	if !efforts["/effort none"] || !efforts["/effort high"] {
+		t.Fatalf("efforts = %#v", efforts)
+	}
 	if completionsFor("hello") != nil {
 		t.Fatal("plain text opened completions")
 	}
@@ -198,5 +205,34 @@ func TestAllowPathGrantsReadAccess(t *testing.T) {
 	chat.handleAllowPath("/allowpath /does/not/exist")
 	if !strings.Contains(chat.status, "Could not resolve") && !strings.Contains(chat.status, "Granted") {
 		t.Fatalf("expected resolve error, got: %q", chat.status)
+	}
+}
+
+func TestEffortCommandSetsEffort(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.setEffort = func(effort string) error {
+		if chat.effortOverrides == nil {
+			chat.effortOverrides = map[string]string{}
+		}
+		chat.effortOverrides["agent"] = effort
+		return nil
+	}
+
+	chat.handleEffort("/effort")
+	if !strings.Contains(chat.status, "Effort levels") {
+		t.Fatalf("expected levels list, got: %q", chat.status)
+	}
+
+	chat.handleEffort("/effort high")
+	if !strings.Contains(chat.status, "Effort set to high") {
+		t.Fatalf("expected set status, got: %q", chat.status)
+	}
+	if chat.effortOverrides["agent"] != "high" {
+		t.Fatalf("effort = %q", chat.effortOverrides["agent"])
+	}
+
+	chat.handleEffort("/effort invalid")
+	if !strings.Contains(chat.status, "Usage") {
+		t.Fatalf("expected usage error, got: %q", chat.status)
 	}
 }

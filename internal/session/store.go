@@ -26,6 +26,7 @@ type File struct {
 	Messages   []gogent.Message  `json:"messages"`
 	Review     []ReviewEntry     `json:"review,omitempty"`
 	Models     map[string]string `json:"models,omitempty"`
+	Efforts    map[string]string `json:"efforts,omitempty"`
 	ReadGrants []string          `json:"read_grants,omitempty"`
 }
 

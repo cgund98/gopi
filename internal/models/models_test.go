@@ -20,15 +20,13 @@ func TestEstimateCostUsesPrices(t *testing.T) {
 	if ContextWindow("gpt-5.6-sol") != 272000 {
 		t.Fatalf("sol window = %d", ContextWindow("gpt-5.6-sol"))
 	}
-	provider, id, err := Parse("kimi/kimi-k2.6-nothink")
+	provider, id, err := Parse("kimi/kimi-k2.6")
 	if err != nil || provider != ProviderKimi || id != "kimi-k2.6" {
-		t.Fatalf("nothink = %q %q %v", provider, id, err)
+		t.Fatalf("kimi = %q %q %v", provider, id, err)
 	}
-	if entry, _ := Lookup("kimi/kimi-k2.6-nothink"); !entry.DisableThinking {
-		t.Fatal("nothink entry keeps thinking on")
-	}
-	if entry, _ := Lookup("kimi/kimi-k2.6"); entry.DisableThinking {
-		t.Fatal("default kimi entry disables thinking")
+	provider, id, err = Parse("deepseek/deepseek-flash")
+	if err != nil || provider != ProviderDeepSeek || id != "deepseek-flash" {
+		t.Fatalf("deepseek = %q %q %v", provider, id, err)
 	}
 	if _, _, err := Parse("gpt-4o-mini"); err == nil {
 		t.Fatal("gpt-4o-mini is still supported")

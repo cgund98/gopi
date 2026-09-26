@@ -54,6 +54,7 @@ func (m *chatModel) persistSession() tea.Cmd {
 	titleFn := m.chatTitle
 	ctx := m.ctx
 	models := m.modelOverrides
+	efforts := m.effortOverrides
 	var grants []string
 	haveGrants := m.readGrants != nil
 	if haveGrants {
@@ -87,6 +88,7 @@ func (m *chatModel) persistSession() tea.Cmd {
 			Messages:   messages,
 			Review:     review,
 			Models:     models,
+			Efforts:    efforts,
 			ReadGrants: grants,
 		})
 		return sessionSavedMsg{Title: title, Review: review, Err: err}

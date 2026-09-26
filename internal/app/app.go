@@ -56,6 +56,7 @@ type Session struct {
 	extra      map[Mode][]gogent.Tool
 	models     *modelFactory
 	overrides  map[Mode]string
+	efforts    map[Mode]string
 	active     string
 	basePrompt string
 }
@@ -112,6 +113,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		extra:      extra,
 		models:     newModelFactory(cfg),
 		overrides:  map[Mode]string{},
+		efforts:    map[Mode]string{},
 		basePrompt: text,
 	}
 	delegate := &tools.Delegate{
@@ -126,7 +128,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		Grants:      grants,
 		Progress:    session.Subagent,
 		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
-			return session.models.New(session.active, registry, session.basePrompt)
+			return session.models.New(session.active, registry, session.basePrompt, session.effortFor(session.Mode))
 		},
 	}
 	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch, tasks, &tools.UpdatePlan{Inner: plan})
@@ -190,6 +192,11 @@ func (s *Session) ActiveModel() string {
 	return s.active
 }
 
+// ActiveEffort is the effort in effect for the active mode and model.
+func (s *Session) ActiveEffort() string {
+	return s.effortFor(s.Mode)
+}
+
 // ModelOverrides returns the per-mode names chosen with /model.
 func (s *Session) ModelOverrides() map[string]string {
 	if len(s.overrides) == 0 {
@@ -211,6 +218,26 @@ func (s *Session) SetModelOverrides(overrides map[string]string) {
 			continue
 		}
 		s.overrides[Mode(mode)] = name
+	}
+}
+
+// EffortOverrides returns the per-mode effort values chosen with /effort.
+func (s *Session) EffortOverrides() map[string]string {
+	if len(s.efforts) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(s.efforts))
+	for mode, effort := range s.efforts {
+		out[string(mode)] = effort
+	}
+	return out
+}
+
+// SetEffortOverrides restores effort values chosen in an earlier session.
+func (s *Session) SetEffortOverrides(overrides map[string]string) {
+	s.efforts = map[Mode]string{}
+	for mode, effort := range overrides {
+		s.efforts[Mode(mode)] = effort
 	}
 }
 
@@ -236,6 +263,15 @@ func (s *Session) SetModel(name string) error {
 	return s.apply(s.Mode, name)
 }
 
+// SetEffort sets the effort used by the active mode for the rest of this session.
+func (s *Session) SetEffort(effort string) error {
+	if s.efforts == nil {
+		s.efforts = map[Mode]string{}
+	}
+	s.efforts[s.Mode] = effort
+	return s.apply(s.Mode, s.active)
+}
+
 // SetBuild selects the agent registry and the build model for one plan turn.
 func (s *Session) SetBuild() error {
 	name := s.Config.BuildModel
@@ -252,9 +288,16 @@ func (s *Session) modelFor(mode Mode) string {
 	return s.Config.ModelFor(string(mode))
 }
 
+func (s *Session) effortFor(mode Mode) string {
+	if effort := s.efforts[mode]; effort != "" {
+		return effort
+	}
+	return s.Config.EffortFor(string(mode))
+}
+
 func (s *Session) apply(mode Mode, name string) error {
 	registry := s.registries[mode]
-	model, err := s.models.New(name, registry, prompt.WithMode(s.basePrompt, string(mode)))
+	model, err := s.models.New(name, registry, prompt.WithMode(s.basePrompt, string(mode)), s.effortFor(mode))
 	if err != nil {
 		return fmt.Errorf("build model: %w", err)
 	}
@@ -274,7 +317,7 @@ func (s *Session) apply(mode Mode, name string) error {
 
 // ChatTitle asks the model for a short title and sends no tools.
 func (s *Session) ChatTitle(ctx context.Context, userText, assistantText string) (string, error) {
-	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Reply with a short chat title of at most 6 words and nothing else.")
+	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Reply with a short chat title of at most 6 words and nothing else.", s.effortFor(s.Mode))
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +332,7 @@ func (s *Session) ChatTitle(ctx context.Context, userText, assistantText string)
 
 // Summarize asks the active model for a summary of earlier turns. The reply carries that turn's usage.
 func (s *Session) Summarize(ctx context.Context, transcript string) (gogent.Message, error) {
-	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Summarize the earlier conversation. Keep decisions, file paths, and unfinished work. Reply with the summary only.")
+	model, err := s.models.New(s.active, gogent.NewToolRegistry(), "Summarize the earlier conversation. Keep decisions, file paths, and unfinished work. Reply with the summary only.", s.effortFor(s.Mode))
 	if err != nil {
 		return gogent.Message{}, err
 	}

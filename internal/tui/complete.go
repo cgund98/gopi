@@ -19,6 +19,7 @@ func composerCommands() []completion {
 		{insert: "/plan", label: "/plan", detail: "switch to Plan"},
 		{insert: "/mode", label: "/mode <name>", detail: "switch mode"},
 		{insert: "/model", label: "/model <name>", detail: "set the model for this mode"},
+		{insert: "/effort", label: "/effort <level>", detail: "set reasoning effort for this mode"},
 		{insert: "/allowpath", label: "/allowpath <path>", detail: "grant read access outside workspace"},
 		{insert: "/compact", label: "/compact", detail: "summarize earlier turns"},
 		{insert: "/mouse", label: "/mouse [on|off]", detail: "toggle mouse capture"},
@@ -82,6 +83,13 @@ func completionsFor(text string) []completion {
 			items = append(items, completion{insert: "/model " + model, label: "/model " + model, detail: "model"})
 		}
 		return filterCompletions(items, arg)
+	case "/effort":
+		return filterCompletions([]completion{
+			{insert: "/effort none", label: "/effort none", detail: "disable reasoning"},
+			{insert: "/effort low", label: "/effort low", detail: "low reasoning effort"},
+			{insert: "/effort medium", label: "/effort medium", detail: "medium reasoning effort"},
+			{insert: "/effort high", label: "/effort high", detail: "high reasoning effort"},
+		}, arg)
 	case "/allowpath":
 		return nil
 	default:
@@ -121,7 +129,7 @@ func (m *chatModel) acceptComplete() {
 	}
 	item := m.completeItems[m.completeIndex]
 	insert := item.insert
-	if item.insert == "/mode" || item.insert == "/model" {
+	if item.insert == "/mode" || item.insert == "/model" || item.insert == "/effort" {
 		insert += " "
 	}
 	m.input.SetValue(insert)

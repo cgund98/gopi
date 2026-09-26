@@ -14,16 +14,17 @@ import (
 const fileName = "secrets.toml"
 
 const (
-	OpenAIAPIKey = "openai_api_key"
-	KimiAPIKey   = "kimi_api_key"
-	SearchAPIKey = "search_api_key"
+	OpenAIAPIKey   = "openai_api_key"
+	KimiAPIKey     = "kimi_api_key"
+	DeepSeekAPIKey = "deepseek_api_key"
+	SearchAPIKey   = "search_api_key"
 )
 
 // HostOnly reports keys that stay on the host and are never offered to shell.
 // extra adds names claimed by custom tool factories.
 func HostOnly(name string, extra ...string) bool {
 	switch name {
-	case OpenAIAPIKey, KimiAPIKey, SearchAPIKey:
+	case OpenAIAPIKey, KimiAPIKey, DeepSeekAPIKey, SearchAPIKey:
 		return true
 	}
 	for _, claimed := range extra {

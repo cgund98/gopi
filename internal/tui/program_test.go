@@ -26,13 +26,17 @@ import (
 )
 
 func TestStatusSuffixShowsModelWorkspaceAndThinking(t *testing.T) {
-	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, false, "", 48)), " ")
+	idle := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "", "/tmp/gopi", "", 12, false, "", 48)), " ")
 	if !strings.HasPrefix(idle, "/tmp/gopi") || !strings.HasSuffix(idle, "gpt-6-sol | 12%") || strings.Contains(idle, "thinking") {
 		t.Fatalf("idle suffix = %q", idle)
 	}
-	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "/tmp/gopi", "", 12, true, "2s", 48)), " ")
+	busy := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "", "/tmp/gopi", "", 12, true, "2s", 48)), " ")
 	if !strings.HasPrefix(busy, "/tmp/gopi") || !strings.HasSuffix(busy, "gpt-6-sol | 12% | thinking 2s") {
 		t.Fatalf("busy suffix = %q", busy)
+	}
+	effort := strings.TrimRight(stripANSI(renderStatusSuffix("gpt-6-sol", "none", "/tmp/gopi", "", 12, false, "", 48)), " ")
+	if !strings.HasSuffix(effort, "gpt-6-sol (none) | 12%") {
+		t.Fatalf("effort suffix = %q", effort)
 	}
 }
 
