@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/cgund98/gopi/compare/v0.3.0...v0.4.0) (2026-09-26)
+
+
+### Features
+
+* add support for allow dir command ([c36182a](https://github.com/cgund98/gopi/commit/c36182a096d3c26d2f3f833ea0e48bb69755c60e))
+* support deepseek and model effort ([2c60e83](https://github.com/cgund98/gopi/commit/2c60e835ec5bc49e58c09d49dd96d78d98a29819))
+
+
+### Bug Fixes
+
+* remove secret injection to shell ([e75bdd4](https://github.com/cgund98/gopi/commit/e75bdd4db3a90985620dded673636189aaccd65a))
+
 ## [0.3.0](https://github.com/cgund98/gopi/compare/v0.2.0...v0.3.0) (2026-09-26)
 
 
