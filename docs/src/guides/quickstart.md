@@ -4,13 +4,26 @@ Install gopi, connect a model, start it in a workspace, and complete a first tas
 
 ## Install
 
-gopi needs Go 1.25 or later. Install the binary from the module proxy:
+Install gopi one of three ways. All three produce the same binary.
+
+### Use a prebuilt binary
+
+Download the file matching your OS and architecture (for example
+`gopi_0.4.1_darwin_arm64`) from the
+[releases page](https://github.com/cgund98/gopi/releases), then put it on your
+`PATH`.
+
+### Install from the module proxy
+
+With Go 1.25 or later:
 
 ```bash
 go install github.com/cgund98/gopi/cmd/gopi@latest
 ```
 
-To build from source instead, clone the repository and build the binary:
+### Build from source
+
+Clone the repository and build the binary:
 
 ```bash
 git clone https://github.com/cgund98/gopi

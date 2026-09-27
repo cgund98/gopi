@@ -21,6 +21,9 @@ gopi needs Go 1.25 or later.
 go install github.com/cgund98/gopi/cmd/gopi@latest
 ```
 
+Prebuilt Linux and macOS binaries are attached to each
+[release](https://github.com/cgund98/gopi/releases).
+
 ## Quickstart
 
 ```bash
@@ -76,8 +79,9 @@ go run ./cmd/gopi
 ```
 
 Run `make test` for the test suite and `make lint` for the linter. Pushes run
-lint, tests, and a format check. Merging a release pull request tags the module
-and publishes it to the Go module proxy.
+lint, tests, and a format check. Merging a release pull request tags the module,
+publishes it to the Go module proxy, and attaches prebuilt Linux and macOS
+binaries to the GitHub release.
 
 ## License
 
