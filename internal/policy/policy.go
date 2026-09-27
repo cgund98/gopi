@@ -13,6 +13,7 @@ import (
 var FloorGlobs = []string{
 	"**/.env",
 	"**/.env.*",
+	"**/.gopi",
 	"**/*.pem",
 	"**/*.key",
 	"**/id_rsa",

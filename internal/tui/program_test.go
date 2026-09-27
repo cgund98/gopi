@@ -229,6 +229,26 @@ func TestPasteKeepsNewlines(t *testing.T) {
 	}
 }
 
+func TestComposerWrapsLongInput(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.width = 24
+	chat.height = 20
+	chat.input.SetValue(strings.Repeat("word ", 20))
+	chat.input.CursorEnd()
+	plain := stripANSI(chat.View())
+	if chat.input.Height() < 2 {
+		t.Fatalf("composer stayed one row: height=%d view=\n%s", chat.input.Height(), plain)
+	}
+	if !strings.Contains(plain, "agent") || !strings.Contains(plain, "word") {
+		t.Fatalf("lost prompt or typed text:\n%s", plain)
+	}
+	for i, line := range strings.Split(plain, "\n") {
+		if lipgloss.Width(line) > chat.width {
+			t.Fatalf("line %d width %d > %d: %q", i, lipgloss.Width(line), chat.width, line)
+		}
+	}
+}
+
 type shiftEnterMsg string
 
 func (m shiftEnterMsg) String() string { return string(m) }

@@ -304,6 +304,17 @@ func mustJSON(t *testing.T, value string) string {
 	return string(body)
 }
 
+func matchPathsContain(matches []struct {
+	Path string `json:"path"`
+}, part string) bool {
+	for _, match := range matches {
+		if strings.Contains(match.Path, part) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestReadProtectedPathPausesAndRedacts(t *testing.T) {
 	root := openTemp(t)
 	if err := os.WriteFile(filepath.Join(root.Path, ".env"), []byte("visible=1\nother-secret\n"), 0o600); err != nil {
@@ -541,6 +552,15 @@ func TestGrepAndFindHonorDirectoryElevation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cache, "b.txt"), []byte("needle\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(cache, ".gopi", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, ".env"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, ".gopi", "plans", "secret.md"), []byte("needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	rules, err := policy.Build(root.Path, t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -552,14 +572,29 @@ func TestGrepAndFindHonorDirectoryElevation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(opened), "scratch/demo/a.txt") || !strings.Contains(string(opened), "scratch/demo/b.txt") || strings.Contains(string(opened), `"denied":[{`) {
+	var openedPayload struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(opened, &openedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !matchPathsContain(openedPayload.Matches, "scratch/demo/a.txt") || !matchPathsContain(openedPayload.Matches, "scratch/demo/b.txt") || matchPathsContain(openedPayload.Matches, ".env") || matchPathsContain(openedPayload.Matches, ".gopi") {
 		t.Fatalf("directory grant = %s", opened)
 	}
 	listed, err := findTool.Execute(context.Background(), json.RawMessage(`{"read_paths":["scratch"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(listed), "scratch/demo/a.txt") || !strings.Contains(string(listed), "scratch/demo/b.txt") {
+	var listedPayload struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(listed, &listedPayload); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(listedPayload.Files, ",")
+	if !strings.Contains(joined, "scratch/demo/a.txt") || !strings.Contains(joined, "scratch/demo/b.txt") || strings.Contains(joined, ".env") || strings.Contains(joined, ".gopi") {
 		t.Fatalf("find directory grant = %s", listed)
 	}
 

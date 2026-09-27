@@ -49,7 +49,7 @@ func TestModesSwitchRegistryAndKeepTranscript(t *testing.T) {
 			t.Fatalf("ask has %s", name)
 		}
 	}
-	if !planNames["write_plan"] || planNames["edit_file"] || planNames["shell"] || planNames["delegate"] {
+	if !planNames["write_plan"] || !planNames["shell"] || planNames["edit_file"] || planNames["delegate"] {
 		t.Fatalf("plan tools = %v", planNames)
 	}
 	if !agentNames["edit_file"] || !agentNames["shell"] || !agentNames["delegate"] || !agentNames["tasks"] || !agentNames["write_plan"] {

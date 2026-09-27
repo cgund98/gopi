@@ -609,12 +609,12 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.moveComplete(delta)
 			return m, nil
 		}
-		if msg.String() == "up" && m.input.LineCount() > 1 && m.input.Line() > 0 {
+		if msg.String() == "up" && composerCanMoveUp(m.input) {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
 		}
-		if msg.String() == "down" && m.input.LineCount() > 1 && m.input.Line() < m.input.LineCount()-1 {
+		if msg.String() == "down" && composerCanMoveDown(m.input) {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
@@ -828,14 +828,11 @@ func csiReport(body string) string {
 }
 
 func (m *chatModel) inputExtraLines() int {
-	n := m.input.LineCount()
-	if n < 1 {
-		n = 1
+	width := m.width
+	if width < 20 {
+		width = 20
 	}
-	if n > maxComposerLines {
-		n = maxComposerLines
-	}
-	return n - 1
+	return m.composerRows(width) - 1
 }
 
 func (m *chatModel) syncComposer(width int) {
@@ -851,18 +848,63 @@ func (m *chatModel) syncComposer(width int) {
 		}
 		return strings.Repeat(" ", promptWidth)
 	})
-	if width < promptWidth+10 {
-		width = promptWidth + 10
+	if width < 1 {
+		width = 1
 	}
 	m.input.SetWidth(width)
-	height := m.input.LineCount()
-	if height < 1 {
-		height = 1
+	m.input.SetHeight(m.composerRows(width))
+}
+
+func (m *chatModel) composerRows(totalWidth int) int {
+	promptWidth := lipgloss.Width(modePrompt(m.mode))
+	if promptWidth < 1 {
+		promptWidth = 1
 	}
-	if height > maxComposerLines {
-		height = maxComposerLines
+	textWidth := totalWidth - promptWidth
+	if textWidth < 1 {
+		textWidth = 1
 	}
-	m.input.SetHeight(height)
+	n := wrappedLineCount(m.input.Value(), textWidth)
+	if n < 1 {
+		n = 1
+	}
+	if n > maxComposerLines {
+		n = maxComposerLines
+	}
+	return n
+}
+
+func composerCanMoveUp(input textarea.Model) bool {
+	return input.Line() > 0 || input.LineInfo().RowOffset > 0
+}
+
+func composerCanMoveDown(input textarea.Model) bool {
+	if input.Line() < input.LineCount()-1 {
+		return true
+	}
+	info := input.LineInfo()
+	return info.RowOffset < info.Height-1
+}
+
+// wrappedLineCount is the number of visual rows a textarea will use. It counts
+// hard newlines and soft wraps, including the extra row bubbles adds when a
+// line fills the wrap width.
+func wrappedLineCount(text string, width int) int {
+	if width < 1 {
+		width = 1
+	}
+	n := 0
+	for _, line := range strings.Split(text, "\n") {
+		parts := wrapWidth(line, width)
+		n += len(parts)
+		if len(parts) > 0 && lipgloss.Width(parts[len(parts)-1]) >= width {
+			n++
+		}
+	}
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 func (m *chatModel) View() string {

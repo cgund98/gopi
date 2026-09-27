@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/cgund98/gogent"
 
@@ -58,8 +59,25 @@ type ToolEnv struct {
 	// Workspace is the canonical workspace root.
 	Workspace string
 
-	secrets map[string]string
-	files   map[string]string
+	secrets  map[string]string
+	files    map[string]string
+	sections config.Custom
+}
+
+// Config decodes the [name] table from ~/.gopi/config.toml into v, which must be
+// a pointer. A missing table is an error.
+func (e ToolEnv) Config(name string, v any) error {
+	found, err := e.sections.Section(name, v)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if names := e.sections.Names(); len(names) > 0 {
+			return fmt.Errorf("section [%s] is missing from ~/.gopi/config.toml; have [%s]", name, strings.Join(names, "], ["))
+		}
+		return fmt.Errorf("section [%s] is missing from ~/.gopi/config.toml", name)
+	}
+	return nil
 }
 
 // Secret returns a value from ~/.gopi/secrets.toml, or the contents of the file
@@ -100,7 +118,7 @@ func buildTools(cfg config.Config, workspacePath string, o options) (map[Mode][]
 	for mode, list := range o.tools {
 		out[mode] = append(out[mode], list...)
 	}
-	env := ToolEnv{Workspace: workspacePath, secrets: cfg.Secrets, files: cfg.SecretFiles}
+	env := ToolEnv{Workspace: workspacePath, secrets: cfg.Secrets, files: cfg.SecretFiles, sections: cfg.Custom}
 	for _, factory := range o.factories {
 		tool, err := factory.build(env)
 		if err != nil {

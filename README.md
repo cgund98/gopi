@@ -2,6 +2,8 @@
 
 Extensible personal coding agent.
 
+![gopi summarizing this repository](assets/summarize-repo.gif)
+
 ```bash
 export DEEPSEEK_API_KEY=...
 go run ./cmd/gopi
@@ -99,6 +101,33 @@ A name without a prefix uses OpenAI, a `kimi/` prefix uses Kimi, and a `deepseek
 `web_search` calls `https://api.search.brave.com/res/v1/web/search` unless `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. The shell sandbox stays on its own network setting. `web_fetch` reads one public `http` or `https` URL on the host. It does not use the search key or open a socket inside `shell`.
 
 A `*` in a host pattern matches one DNS label, as in `*.npmjs.org`.
+
+### Custom tool config
+
+A `WithToolFactory` tool can read its own top-level table from `config.toml`. The table name is whatever the tool picks, for example `[calendar]`:
+
+```toml
+[calendar]
+default_calendar = "primary"
+```
+
+The factory decodes it with `env.Config(name, &v)`, where `v` is a pointer to a struct whose fields use `toml` tags:
+
+```go
+type config struct {
+    DefaultCalendar string `toml:"default_calendar"`
+}
+
+gopi.WithToolFactory(gopi.ModeAgent, func(env gopi.ToolEnv) (gogent.Tool, error) {
+    var cfg config
+    if err := env.Config("calendar", &cfg); err != nil {
+        return nil, err
+    }
+    return calendar.New(cfg.DefaultCalendar), nil
+})
+```
+
+A missing table is an error. Built-in tables (`model`, `models`, `efforts`, `sandbox`, `instructions`, `search`) are read by gopi and are not available this way. A project `.gopi/config.toml` is not loaded, so a custom table must be in `~/.gopi/config.toml`.
 
 ### Prompts and skills
 

@@ -29,7 +29,7 @@ type ReadFile struct {
 func (t *ReadFile) Name() string { return "read_file" }
 
 func (t *ReadFile) Description() string {
-	return "Read a file. The result gives start_line, end_line, and total_lines for the returned content. When truncated is true, call again with offset set to next_offset to read the rest; lines already returned do not need to be read again. Paths outside the workspace and protected paths require approval. A path covered by grant_read does not ask again unless it is protected."
+	return "Read a file. The result gives start_line, end_line, and total_lines for the returned content. When truncated is true, call again with offset set to next_offset to read the rest; lines already returned do not need to be read again. Paths outside the workspace and protected paths require approval. A path covered by grant_read does not ask again. A directory grant does not include protected files under it such as .env or .gopi."
 }
 
 func (t *ReadFile) Parameters() json.RawMessage { return schemaFor(new(readFileArgs)) }
@@ -39,7 +39,7 @@ func (t *ReadFile) RequiresApproval(_ context.Context, raw json.RawMessage) (gog
 	if err != nil {
 		return gogent.ApprovalDecision{}, nil
 	}
-	if rule, ok := t.Rules.MatchRead(resolved); ok {
+	if rule, ok := t.Rules.MatchRead(resolved); ok && !grantCoversRead(resolved, t.Rules, t.Grants.List()) {
 		return gogent.ApprovalDecision{Required: true, Reason: "Protected path " + rule + ": " + displayPath(raw)}, nil
 	}
 	if outside && !t.Grants.Covers(resolved) {

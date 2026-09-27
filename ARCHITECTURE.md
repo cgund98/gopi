@@ -492,7 +492,7 @@ The TUI switches the session among Agent, Ask, and Plan with `/agent`, `/ask`, `
 |------|--------|---------------------|
 | Agent | `read_file`, `grep`, `find`, `shell`, `edit_file`, `delegate`, `web_search`, `web_fetch`, `tasks`, `write_plan` | Changes the workspace and runs commands. `tasks` is the live checklist. `write_plan` updates an existing file under `.gopi/plans` |
 | Ask | `read_file`, `grep`, `find`, `web_search`, `web_fetch` | Answers questions about the workspace and the public web. `edit_file` and `shell` are not registered |
-| Plan | Ask's tools, plus `write_plan` | Explores, then writes `<workspace>/.gopi/plans/<plan_name>-<uuid>.md`. No file edits and no shell until the user switches to Agent |
+| Plan | Ask's tools, plus `shell` and `write_plan` | Explores, then writes `<workspace>/.gopi/plans/<plan_name>-<uuid>.md`. No `edit_file` until the user switches to Agent |
 
 Plan does not auto-apply when the user accepts it. Applying the plan is an Agent turn the user starts explicitly. `write_plan` stores implementation steps in YAML todo frontmatter and does not ask for approval inside a trusted workspace. Building a plan loads those todos into `tasks`. A child started by `delegate` does not receive `edit_file`, `delegate`, `web_search`, `web_fetch`, or `tasks`, and elevated calls fail closed.
 

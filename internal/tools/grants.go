@@ -8,24 +8,28 @@ import (
 
 	"github.com/cgund98/gogent"
 
+	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
 // ReadGrants is the set of paths this chat may read outside the workspace.
-// Protected paths stay denied. Writes are not included.
+// A directory grant does not open a protected child such as .env or .gopi.
+// Writes are not included.
 type ReadGrants struct {
 	mu    sync.Mutex
 	paths []string
+	Rules policy.Rules
 }
 
-// Add stores a canonical path. A path already covered is left as it is.
+// Add stores a canonical path. A path already opened by an existing grant is
+// left as it is. A protected child of a granted directory is still stored.
 func (g *ReadGrants) Add(path string) {
 	if g == nil || path == "" {
 		return
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if coversGrant(path, g.paths) {
+	if coversGrant(path, g.paths) && grantCoversRead(path, g.Rules, g.paths) {
 		return
 	}
 	g.paths = append(g.paths, path)
@@ -53,9 +57,14 @@ func (g *ReadGrants) Replace(paths []string) {
 	g.paths = append([]string(nil), paths...)
 }
 
-// Covers reports whether path is a granted path or a file under one.
+// Covers reports whether an existing grant opens this path. A parent grant
+// does not cover a protected child unless that child was granted on its own.
 func (g *ReadGrants) Covers(path string) bool {
-	return coversGrant(path, g.List())
+	if g == nil {
+		return false
+	}
+	grants := g.List()
+	return coversGrant(path, grants) && grantCoversRead(path, g.Rules, grants)
 }
 
 type grantReadArgs struct {
@@ -71,7 +80,7 @@ type GrantRead struct {
 func (t *GrantRead) Name() string { return "grant_read" }
 
 func (t *GrantRead) Description() string {
-	return "Ask to read a file or directory outside the workspace for the rest of this chat. Call this when later reads, searches, or shell commands will need that directory more than once. One-off files still use read_paths. Writes stay on write_paths and still ask every time. Protected paths stay denied. A path already granted does not ask again."
+	return "Ask to read a file or directory outside the workspace for the rest of this chat. Call this when later reads, searches, or shell commands will need that directory more than once. One-off files still use read_paths. Writes stay on write_paths and still ask every time. A directory grant does not include protected files under it such as .env or .gopi; those need their own approval. A path already granted does not ask again."
 }
 
 func (t *GrantRead) Parameters() json.RawMessage { return schemaFor(new(grantReadArgs)) }

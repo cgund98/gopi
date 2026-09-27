@@ -234,3 +234,59 @@ func TestLoadDeepSeekModelRequiresKey(t *testing.T) {
 		t.Fatalf("cfg model %q key %q", cfg.Model, cfg.DeepSeekAPIKey)
 	}
 }
+
+func TestLoadCustomSections(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+model = "deepseek/deepseek-flash"
+
+[calendar]
+default_calendar = "primary"
+lookahead_days = 7
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var calendar struct {
+		DefaultCalendar string `toml:"default_calendar"`
+		LookaheadDays   int    `toml:"lookahead_days"`
+	}
+	found, err := cfg.Custom.Section("calendar", &calendar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || calendar.DefaultCalendar != "primary" || calendar.LookaheadDays != 7 {
+		t.Fatalf("calendar = %+v found %v", calendar, found)
+	}
+	if found, err := cfg.Custom.Section("models", &map[string]any{}); err != nil || found {
+		t.Fatalf("models section found %v err %v", found, err)
+	}
+	if names := cfg.Custom.Names(); len(names) != 1 || names[0] != "calendar" {
+		t.Fatalf("names = %v", names)
+	}
+
+	plain := []byte("model = \"deepseek/deepseek-flash\"\n")
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), plain, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := cfg.Custom.Names(); len(names) != 0 {
+		t.Fatalf("names = %v", names)
+	}
+	if found, err := cfg.Custom.Section("calendar", &calendar); err != nil || found {
+		t.Fatalf("found %v err %v", found, err)
+	}
+}
