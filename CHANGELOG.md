@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/cgund98/gopi/compare/v0.4.0...v0.5.0) (2026-09-27)
+
+
+### Features
+
+* add documentation site ([466c954](https://github.com/cgund98/gopi/commit/466c9549461b7c917d795c00a4a60714ea77068b))
+* build binaries and attach to releases ([d13081f](https://github.com/cgund98/gopi/commit/d13081fe769c8efb6b68272f8c42c9d89c7437a8))
+* document application in GitHub pages ([d22c78e](https://github.com/cgund98/gopi/commit/d22c78ece73545d2982264499704b12f78dc393b))
+* support custom config in tool factory ([3e3dac4](https://github.com/cgund98/gopi/commit/3e3dac40a6aa831906bfc24e3aefd9e696986b3a))
+
 ## [0.4.0](https://github.com/cgund98/gopi/compare/v0.3.0...v0.4.0) (2026-09-26)
 
 
