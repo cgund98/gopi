@@ -66,10 +66,11 @@ func grantCoversRead(path string, rules policy.Rules, grants []string) bool {
 	return false
 }
 
-// grantOpens reports whether this directory can be walked. A grant of the
-// directory itself opens it, and so does a grant of a file inside it.
-func grantOpens(path string, grants []string) bool {
-	if coversGrant(path, grants) {
+// grantOpens reports whether this protected directory can be walked. A grant of
+// the directory itself opens it, and so does a grant of a file inside it. A
+// grant of a parent does not, so approving a repo does not open .env or .gopi.
+func grantOpens(path string, rules policy.Rules, grants []string) bool {
+	if grantCoversRead(path, rules, grants) {
 		return true
 	}
 	prefix := path + string(os.PathSeparator)

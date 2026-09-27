@@ -22,6 +22,9 @@ func TestFloorSurvivesGitignoreNegation(t *testing.T) {
 		t.Fatal("floor does not cover .ENV")
 	}
 	patternMatching(t, rules.DenyRead, filepath.Join(root, "debug.log"))
+	if _, ok := rules.MatchRead(filepath.Join(root, ".gopi", "plans", "ship.md")); !ok {
+		t.Fatal(".gopi is not on the floor")
+	}
 }
 
 func TestSecretFilesAreProtected(t *testing.T) {

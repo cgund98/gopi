@@ -1,0 +1,10 @@
+[book]
+title = "gopi"
+description = "An extensible personal coding agent."
+authors = ["Callum Gundlach"]
+src = "src"
+
+[output.html]
+site-url = "/gopi/"
+git-repository-url = "https://github.com/cgund98/gopi"
+edit-url-template = "https://github.com/cgund98/gopi/edit/main/docs/src/{path}"

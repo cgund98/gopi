@@ -3,6 +3,8 @@ package gopi
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,5 +87,47 @@ func TestBuildToolsFailsOnMissingSecret(t *testing.T) {
 	_, err := buildTools(config.Config{Secrets: map[string]string{}}, "/work", o)
 	if err == nil || !strings.Contains(err.Error(), "secret gcal_token is missing from ~/.gopi/secrets.toml") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBuildToolsReadsConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOPI_HOME", dir)
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	body := []byte("model = \"deepseek/deepseek-flash\"\n\n[calendar]\ndefault_calendar = \"primary\"\n")
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		DefaultCalendar string `toml:"default_calendar"`
+	}
+	var missingErr error
+	o := collect(WithToolFactory(ModeAgent, func(env ToolEnv) (gogent.Tool, error) {
+		if err := env.Config("calendar", &got); err != nil {
+			return nil, err
+		}
+		var out struct {
+			DefaultCalendar string `toml:"default_calendar"`
+		}
+		missingErr = env.Config("nope", &out)
+		return stubTool{name: "calendar"}, nil
+	}))
+	if _, err := buildTools(cfg, "/work", o); err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultCalendar != "primary" {
+		t.Fatalf("default_calendar = %q", got.DefaultCalendar)
+	}
+	if missingErr == nil || !strings.Contains(missingErr.Error(), "~/.gopi/config.toml") {
+		t.Fatalf("missing section err = %v", missingErr)
 	}
 }

@@ -54,6 +54,7 @@ func (t *Find) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 	if err != nil {
 		return accessDenied(args.Path, err.Error()), nil
 	}
+	opened := append(t.Grants.List(), grants...)
 	starts, err := searchRoots(t.Root, args.Path, grants, t.Grants.List())
 	if err != nil {
 		return accessDenied(args.Path, err.Error()), nil
@@ -70,7 +71,7 @@ func (t *Find) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 				if entry.Name() == ".git" {
 					return filepath.SkipDir
 				}
-				if rule, ok := t.Rules.MatchRead(path); ok && !grantOpens(path, grants) {
+				if rule, ok := t.Rules.MatchRead(path); ok && !grantOpens(path, t.Rules, opened) {
 					appendDenied(&denied, t.Root.Path, path, rule)
 					return filepath.SkipDir
 				}
@@ -81,7 +82,7 @@ func (t *Find) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 				rel = path
 			}
 			rel = filepath.ToSlash(rel)
-			if rule, ok := t.Rules.MatchRead(path); ok && !grantCoversRead(path, t.Rules, grants) {
+			if rule, ok := t.Rules.MatchRead(path); ok && !grantCoversRead(path, t.Rules, opened) {
 				appendDenied(&denied, t.Root.Path, path, rule)
 				return nil
 			}

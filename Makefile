@@ -1,4 +1,4 @@
-.PHONY: test format lint tidy verify run
+.PHONY: test format lint tidy verify run docs docs-serve
 
 test:
 	go test ./...
@@ -17,3 +17,9 @@ verify:
 
 run:
 	go run ./cmd/gopi
+
+docs:
+	mdbook build docs
+
+docs-serve:
+	mdbook serve docs --open

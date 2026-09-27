@@ -23,6 +23,12 @@ func TestGrantReadLetsLaterReadSkipApproval(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, ".env"), []byte("floor-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(outside, ".gopi", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, ".gopi", "plans", "secret.md"), []byte("floor-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	rules, err := policy.Build(root.Path, t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +37,7 @@ func TestGrantReadLetsLaterReadSkipApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grants := &ReadGrants{}
+	grants := &ReadGrants{Rules: rules}
 	grant := &GrantRead{Root: root, Grants: grants}
 	raw := json.RawMessage(`{"path":` + mustJSON(t, resolved) + `}`)
 	decision, err := grant.RequiresApproval(context.Background(), raw)
@@ -63,13 +69,68 @@ func TestGrantReadLetsLaterReadSkipApproval(t *testing.T) {
 		t.Fatalf("read = %s err = %v", body, err)
 	}
 
-	envRaw := json.RawMessage(`{"path":` + mustJSON(t, filepath.Join(outside, ".env")) + `}`)
+	envPath := filepath.Join(outside, ".env")
+	envRaw := json.RawMessage(`{"path":` + mustJSON(t, envPath) + `}`)
 	decision, err = readTool.RequiresApproval(context.Background(), envRaw)
 	if err != nil || !decision.Required || !strings.Contains(decision.Reason, "Protected path") {
 		t.Fatalf("protected decision = %#v err = %v", decision, err)
 	}
+	gopiRaw := json.RawMessage(`{"path":` + mustJSON(t, filepath.Join(outside, ".gopi", "plans", "secret.md")) + `}`)
+	decision, err = readTool.RequiresApproval(context.Background(), gopiRaw)
+	if err != nil || !decision.Required || !strings.Contains(decision.Reason, "Protected path") {
+		t.Fatalf(".gopi decision = %#v err = %v", decision, err)
+	}
 
 	grepTool := &Grep{Root: root, Rules: rules, Grants: grants}
+	hidden, err := grepTool.Execute(context.Background(), json.RawMessage(`{"pattern":"floor-secret","path":`+mustJSON(t, resolved)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hiddenPayload struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(hidden, &hiddenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(hiddenPayload.Matches) != 0 {
+		t.Fatalf("parent grant opened a floor file: %s", hidden)
+	}
+
+	envGrant := json.RawMessage(`{"path":` + mustJSON(t, envPath) + `}`)
+	if _, err := grant.Execute(context.Background(), envGrant); err != nil {
+		t.Fatal(err)
+	}
+	decision, err = readTool.RequiresApproval(context.Background(), envRaw)
+	if err != nil || decision.Required {
+		t.Fatalf("explicit .env grant = %#v err = %v", decision, err)
+	}
+	foundEnv, err := grepTool.Execute(context.Background(), json.RawMessage(`{"pattern":"floor-secret","path":`+mustJSON(t, resolved)+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envPayload struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(foundEnv, &envPayload); err != nil {
+		t.Fatal(err)
+	}
+	sawEnv := false
+	for _, match := range envPayload.Matches {
+		if strings.Contains(match.Path, ".gopi") {
+			t.Fatalf("explicit .env grant opened .gopi: %s", foundEnv)
+		}
+		if strings.HasSuffix(match.Path, ".env") {
+			sawEnv = true
+		}
+	}
+	if !sawEnv {
+		t.Fatalf("explicit .env grant = %s", foundEnv)
+	}
+
 	found, err := grepTool.Execute(context.Background(), json.RawMessage(`{"pattern":"session-body","path":`+mustJSON(t, resolved)+`}`))
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +146,7 @@ func TestGrantReadLetsLaterReadSkipApproval(t *testing.T) {
 	}
 	sawNote := false
 	for _, match := range payload.Matches {
-		if strings.HasSuffix(match.Path, ".env") || strings.Contains(match.Text, "floor-secret") {
+		if strings.HasSuffix(match.Path, ".env") || strings.Contains(match.Path, ".gopi") || strings.Contains(match.Text, "floor-secret") {
 			t.Fatalf("floor file opened: %s", found)
 		}
 		if strings.HasSuffix(match.Path, "note.txt") {

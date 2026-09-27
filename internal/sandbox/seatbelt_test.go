@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -96,6 +97,71 @@ func TestSeatbeltSessionGrantThenFloor(t *testing.T) {
 	extra := strings.Index(body, `(allow file-read* (subpath "`+env+`"))`)
 	if allow < 0 || deny < 0 || extra < 0 || allow >= deny || deny >= extra {
 		t.Fatalf("session allow, then floor deny, then approved file:\n%s", body)
+	}
+}
+
+func TestSeatbeltDirectoryExtraKeepsFloor(t *testing.T) {
+	dir := t.TempDir()
+	env := dir + "/.env"
+	body, err := SeatbeltProfile(Profile{
+		ReadRoots:  []string{"/Users/me/work"},
+		DenyRead:   []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$", "^(.*/)?\\.[gG][oO][pP][iI](/.*)?$"},
+		ExtraReads: []string{dir, env},
+		Network:    NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wide := strings.Index(body, `(allow file-read* (subpath "`+dir+`"))`)
+	firstDeny := strings.Index(body, `(deny file-read* (regex "^(.*/)?\\.[eE][nN][vV](/.*)?$"))`)
+	extraEnv := strings.LastIndex(body, `(allow file-read* (subpath "`+env+`"))`)
+	reDeny := strings.LastIndex(body, `(deny file-read* (regex "^(.*/)?\\.[eE][nN][vV](/.*)?$"))`)
+	if wide < 0 || firstDeny < 0 || extraEnv < 0 || wide >= firstDeny || extraEnv <= reDeny {
+		t.Fatalf("directory extra before floor, approved file after the reapplied floor:\n%s", body)
+	}
+}
+
+func TestSeatbeltProtectedDirKeepsOtherFloor(t *testing.T) {
+	dir := t.TempDir()
+	env := dir + "/.env"
+	if err := os.WriteFile(env, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body, err := SeatbeltProfile(Profile{
+		ReadRoots:  []string{"/Users/me/work"},
+		DenyRead:   []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$", "^" + regexp.QuoteMeta(dir) + "(/.*)?$"},
+		ExtraReads: []string{dir},
+		Network:    NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := strings.Index(body, `(allow file-read* (subpath "`+dir+`"))`)
+	envDeny := strings.LastIndex(body, `(deny file-read* (regex "^(.*/)?\\.[eE][nN][vV](/.*)?$"))`)
+	if allow < 0 || envDeny < 0 || allow >= envDeny || strings.Contains(body, `(allow file-read* (subpath "`+env+`"))`) {
+		t.Fatalf("approved directory must keep the .env floor:\n%s", body)
+	}
+}
+
+func TestSeatbeltSessionFileGrantFollowsFloor(t *testing.T) {
+	dir := t.TempDir()
+	env := dir + "/.env"
+	if err := os.WriteFile(env, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body, err := SeatbeltProfile(Profile{
+		ReadRoots:    []string{"/Users/me/work"},
+		SessionReads: []string{env},
+		DenyRead:     []string{"^(.*/)?\\.[eE][nN][vV](/.*)?$"},
+		Network:      NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deny := strings.Index(body, `(deny file-read* (regex "^(.*/)?\\.[eE][nN][vV](/.*)?$"))`)
+	allow := strings.LastIndex(body, `(allow file-read* (subpath "`+env+`"))`)
+	if deny < 0 || allow < 0 || deny >= allow {
+		t.Fatalf("explicit session file must follow the floor:\n%s", body)
 	}
 }
 

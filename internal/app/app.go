@@ -76,7 +76,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 	}
 	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust, Rules: rules}
 	plan := &tools.WritePlan{Root: root, Workspace: workspaceTrust}
-	grants := &tools.ReadGrants{}
+	grants := &tools.ReadGrants{Rules: rules}
 	for _, dir := range prompt.SkillRoots(promptOptions(cfg, root.Path, workspaceTrust)) {
 		grants.Add(dir)
 	}
@@ -133,7 +133,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 	}
 	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch, tasks, &tools.UpdatePlan{Inner: plan})
 	askTools := append(append([]gogent.Tool{}, read...), search, fetch)
-	planTools := append(append([]gogent.Tool{}, read...), plan, search, fetch)
+	planTools := append(append([]gogent.Tool{}, read...), shell, plan, search, fetch)
 	agentTools = append(agentTools, extra[ModeAgent]...)
 	askTools = append(askTools, extra[ModeAsk]...)
 	planTools = append(planTools, extra[ModePlan]...)

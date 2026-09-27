@@ -2,13 +2,17 @@ package sandbox
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 )
 
 // SeatbeltProfile renders a Seatbelt profile for sandbox-exec.
-// Seatbelt is last-match-wins. Session read grants follow the workspace roots,
-// then the protected-path denials are applied again. A per-call extra read
-// still follows those denials, so one approved protected file stays readable.
+// Seatbelt is last-match-wins. Session grants and wide extra paths follow the
+// workspace roots, then the floor is applied. A directory extra that itself
+// matches the floor is allowed next, and unmatched floor rules are applied
+// again so that grant cannot open .env or .gopi. An approved protected file
+// is allowed last.
 func SeatbeltProfile(profile Profile) (string, error) {
 	switch profile.Network {
 	case "", NetworkDeny, NetworkAllowlist, NetworkUnrestricted:
@@ -39,7 +43,14 @@ func SeatbeltProfile(profile Profile) (string, error) {
 		writeSubpath(&b, "allow file-write*", root)
 		writeSubpath(&b, "allow file-read*", root)
 	}
-	for _, path := range profile.SessionReads {
+	readPaths := append(append([]string{}, profile.SessionReads...), profile.ExtraReads...)
+	wideReads, protectedDirs, protectedFiles := classifyExtras(readPaths, profile.DenyRead)
+	wideWrites, protectedWriteDirs, protectedWriteFiles := classifyExtras(profile.ExtraWrites, profile.DenyWrite)
+	for _, path := range wideReads {
+		writeSubpath(&b, "allow file-read*", path)
+	}
+	for _, path := range wideWrites {
+		writeSubpath(&b, "allow file-write*", path)
 		writeSubpath(&b, "allow file-read*", path)
 	}
 	for _, pattern := range profile.DenyRead {
@@ -48,10 +59,18 @@ func SeatbeltProfile(profile Profile) (string, error) {
 	for _, pattern := range profile.DenyWrite {
 		writeRegex(&b, "deny file-write*", pattern)
 	}
-	for _, path := range profile.ExtraReads {
+	writeProtectedDirs(&b, "file-read*", protectedDirs, profile.DenyRead)
+	for _, path := range protectedWriteDirs {
+		writeSubpath(&b, "allow file-write*", path)
+		writeSubpath(&b, "allow file-read*", path)
+		for _, pattern := range unmatchedDenies(profile.DenyWrite, []string{path}) {
+			writeRegex(&b, "deny file-write*", pattern)
+		}
+	}
+	for _, path := range protectedFiles {
 		writeSubpath(&b, "allow file-read*", path)
 	}
-	for _, path := range profile.ExtraWrites {
+	for _, path := range protectedWriteFiles {
 		writeSubpath(&b, "allow file-write*", path)
 		writeSubpath(&b, "allow file-read*", path)
 	}
@@ -98,4 +117,74 @@ func writeRegex(b *strings.Builder, op, pattern string) {
 
 func quoteSeatbelt(path string) string {
 	return `"` + strings.ReplaceAll(path, `\`, `\\`) + `"`
+}
+
+// classifyExtras splits extra paths so a directory grant cannot punch through a
+// different protected rule. Wide paths are allowed before the floor. Protected
+// directories are allowed after the floor, then unmatched floor rules are
+// applied again. Protected files are allowed last so an explicit .env stays open.
+func classifyExtras(paths, deny []string) (wide, protectedDirs, protectedFiles []string) {
+	for _, path := range paths {
+		if !pathMatchesAny(path, deny) {
+			wide = append(wide, path)
+			continue
+		}
+		if extraIsDir(path) {
+			protectedDirs = append(protectedDirs, path)
+			continue
+		}
+		protectedFiles = append(protectedFiles, path)
+	}
+	return wide, protectedDirs, protectedFiles
+}
+
+func writeProtectedDirs(b *strings.Builder, kind string, dirs, deny []string) {
+	for _, path := range dirs {
+		writeSubpath(b, "allow "+kind, path)
+		for _, pattern := range unmatchedDenies(deny, []string{path}) {
+			writeRegex(b, "deny "+kind, pattern)
+		}
+	}
+}
+
+func unmatchedDenies(deny, extras []string) []string {
+	var out []string
+	for _, pattern := range deny {
+		if pathMatchesAnyPattern(extras, pattern) {
+			continue
+		}
+		out = append(out, pattern)
+	}
+	return out
+}
+
+func pathMatchesAny(path string, patterns []string) bool {
+	for _, pattern := range patterns {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			continue
+		}
+		if re.MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathMatchesAnyPattern(paths []string, pattern string) bool {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return false
+	}
+	for _, path := range paths {
+		if re.MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func extraIsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

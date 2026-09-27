@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -19,7 +20,7 @@ const (
 	configFileName   = "config.toml"
 	systemPromptFile = "system.md"
 	defaultModel     = "deepseek/deepseek-flash"
-	defaultMaxIter   = 10
+	defaultMaxIter   = 50
 	homeDirEnv       = "GOPI_HOME"
 	requiredDirMode  = os.FileMode(0o700)
 )
@@ -76,6 +77,36 @@ type SearchFile struct {
 	Endpoint string `toml:"endpoint"`
 }
 
+// Custom holds the top-level tables in ~/.gopi/config.toml that gopi does not
+// define, such as [calendar]. A tool factory reads one through ToolEnv.Config.
+type Custom struct {
+	meta       *toml.MetaData
+	primitives map[string]toml.Primitive
+}
+
+// Section decodes the top-level [name] table into v, which must be a pointer.
+// found is false when config.toml has no such table.
+func (c Custom) Section(name string, v any) (bool, error) {
+	primitive, ok := c.primitives[name]
+	if !ok {
+		return false, nil
+	}
+	if err := c.meta.PrimitiveDecode(primitive, v); err != nil {
+		return false, fmt.Errorf("decode config section [%s]: %w", name, err)
+	}
+	return true, nil
+}
+
+// Names lists the custom top-level tables, sorted.
+func (c Custom) Names() []string {
+	names := make([]string, 0, len(c.primitives))
+	for name := range c.primitives {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Config is the process configuration for one gopi run.
 type Config struct {
 	Model              string
@@ -104,6 +135,7 @@ type Config struct {
 	FallbackFiles      []string
 	SkillDirs          []string
 	SearchEndpoint     string
+	Custom             Custom
 }
 
 type envSecrets struct {
@@ -157,7 +189,7 @@ func Load(dir string) (Config, error) {
 	}
 
 	path := filepath.Join(dir, configFileName)
-	file, err := loadOrCreateFile(path)
+	file, custom, err := loadOrCreateFile(path)
 	if err != nil {
 		return Config{}, err
 	}
@@ -246,38 +278,40 @@ func Load(dir string) (Config, error) {
 		FallbackFiles:      file.Instructions.FallbackFiles,
 		SkillDirs:          file.Instructions.SkillDirs,
 		SearchEndpoint:     endpoint,
+		Custom:             custom,
 	}, nil
 }
 
-func loadOrCreateFile(path string) (File, error) {
+func loadOrCreateFile(path string) (File, Custom, error) {
 	var file File
 	if _, err := os.Stat(path); err != nil {
 		if !os.IsNotExist(err) {
-			return File{}, fmt.Errorf("stat config: %w", err)
+			return File{}, Custom{}, fmt.Errorf("stat config: %w", err)
 		}
 		file = File{Model: defaultModel, MaxIterations: defaultMaxIter}
 		encoded, err := toml.Marshal(file)
 		if err != nil {
-			return File{}, fmt.Errorf("encode default config: %w", err)
+			return File{}, Custom{}, fmt.Errorf("encode default config: %w", err)
 		}
 		if err := os.WriteFile(path, encoded, 0o600); err != nil {
-			return File{}, fmt.Errorf("write default config: %w", err)
+			return File{}, Custom{}, fmt.Errorf("write default config: %w", err)
 		}
-		return file, nil
+		return file, Custom{}, nil
 	}
 
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return File{}, fmt.Errorf("read config: %w", err)
+		return File{}, Custom{}, fmt.Errorf("read config: %w", err)
 	}
 	return decodeFile(body)
 }
 
-func decodeFile(body []byte) (File, error) {
+func decodeFile(body []byte) (File, Custom, error) {
 	text := strings.ReplaceAll(string(body), "[sandbox.network]", "[sandbox.hosts]")
 	var file File
-	if err := toml.Unmarshal([]byte(text), &file); err != nil {
-		return File{}, fmt.Errorf("decode config: %w", err)
+	md, err := toml.Decode(text, &file)
+	if err != nil {
+		return File{}, Custom{}, fmt.Errorf("decode config: %w", err)
 	}
 	if file.Sandbox.Network == "" {
 		file.Sandbox.Network = "deny"
@@ -285,9 +319,40 @@ func decodeFile(body []byte) (File, error) {
 	switch file.Sandbox.Network {
 	case "deny", "allowlist":
 	default:
-		return File{}, fmt.Errorf("sandbox network %q is not available; use deny or allowlist", file.Sandbox.Network)
+		return File{}, Custom{}, fmt.Errorf("sandbox network %q is not available; use deny or allowlist", file.Sandbox.Network)
 	}
-	return file, nil
+	custom, err := decodeCustom(text, md)
+	if err != nil {
+		return File{}, Custom{}, err
+	}
+	return file, custom, nil
+}
+
+// decodeCustom captures top-level config.toml tables that gopi does not define,
+// such as [calendar]. md is the metadata from decoding the known keys into File;
+// its undecoded length-1 keys are the custom tables.
+func decodeCustom(text string, md toml.MetaData) (Custom, error) {
+	names := map[string]struct{}{}
+	for _, key := range md.Undecoded() {
+		if len(key) == 1 {
+			names[key[0]] = struct{}{}
+		}
+	}
+	if len(names) == 0 {
+		return Custom{}, nil
+	}
+	var all map[string]toml.Primitive
+	primMD, err := toml.Decode(text, &all)
+	if err != nil {
+		return Custom{}, fmt.Errorf("decode config sections: %w", err)
+	}
+	custom := Custom{meta: &primMD, primitives: make(map[string]toml.Primitive, len(names))}
+	for name := range names {
+		if primitive, ok := all[name]; ok {
+			custom.primitives[name] = primitive
+		}
+	}
+	return custom, nil
 }
 
 type resolvedModels struct {
