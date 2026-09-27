@@ -20,7 +20,7 @@ const (
 	configFileName   = "config.toml"
 	systemPromptFile = "system.md"
 	defaultModel     = "deepseek/deepseek-flash"
-	defaultMaxIter   = 10
+	defaultMaxIter   = 50
 	homeDirEnv       = "GOPI_HOME"
 	requiredDirMode  = os.FileMode(0o700)
 )

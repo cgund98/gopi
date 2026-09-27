@@ -29,7 +29,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Effort != "none" {
 		t.Fatalf("effort = %q", cfg.Effort)
 	}
-	if cfg.MaxIterations != 10 {
+	if cfg.MaxIterations != 50 {
 		t.Fatalf("max iterations = %d", cfg.MaxIterations)
 	}
 	if cfg.UserPrompt != "" {

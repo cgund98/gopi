@@ -1,164 +1,84 @@
 # gopi
 
-Extensible personal coding agent.
+An extensible personal coding agent for the terminal.
+
+[![Latest Release](https://img.shields.io/github/v/release/cgund98/gopi)](https://github.com/cgund98/gopi/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cgund98/gopi.svg)](https://pkg.go.dev/github.com/cgund98/gopi)
+[![Docs](https://img.shields.io/badge/docs-cgund98.github.io%2Fgopi-blue)](https://cgund98.github.io/gopi/)
 
 ![gopi summarizing this repository](assets/summarize-repo.gif)
 
+gopi reads and edits a workspace, runs commands in a sandbox, and delegates work
+to subagents. It keeps credentials in the host process and pauses for approval
+before it reads a protected file or widens the sandbox. If the sandbox cannot be
+applied, the command does not run.
+
+## Install
+
+gopi needs Go 1.25 or later.
+
+```bash
+go install github.com/cgund98/gopi/cmd/gopi@latest
+```
+
+## Quickstart
+
 ```bash
 export DEEPSEEK_API_KEY=...
+cd /path/to/project
+gopi
+```
+
+The default workspace is the current directory. Pass a directory to point at
+another one, and `--resume` to reopen the newest saved session. See the
+[Quickstart](https://cgund98.github.io/gopi/guides/quickstart.html) for the full
+walkthrough.
+
+## Highlights
+
+- **Sandboxed shell** — commands run under Seatbelt on macOS. If the sandbox
+  cannot be applied, the command is refused.
+- **Approval per call** — a protected path or a wider sandbox profile pauses for
+  one approval. gopi asks again on the next call.
+- **Secrets stay in the host** — a credential is read by the host process and
+  never reaches the model, a tool argument, or a log line.
+- **Review every edit** — [`/review`](https://cgund98.github.io/gopi/guides/review-changes.html)
+  walks the file edits from the chat as a diff. Approve or reject each hunk, or a
+  whole file, and a rejected hunk reverts to the original.
+- **Extensible** — add a tool from your own Go program with `gopi.WithTool`, or
+  embed the agent with `gopi.Run`.
+
+## Documentation
+
+The full documentation is at **[cgund98.github.io/gopi](https://cgund98.github.io/gopi/)**.
+
+- **Guides** — task-focused pages, starting with the
+  [Quickstart](https://cgund98.github.io/gopi/guides/quickstart.html).
+- **Concepts** — why gopi behaves the way it does, such as
+  [Sandboxing](https://cgund98.github.io/gopi/concepts/sandboxing.html) and
+  [Permissions and approval](https://cgund98.github.io/gopi/concepts/permissions-and-approval.html).
+- **Reference** — the [CLI](https://cgund98.github.io/gopi/reference/cli.html),
+  [configuration](https://cgund98.github.io/gopi/reference/configuration.html),
+  [slash commands](https://cgund98.github.io/gopi/reference/slash-commands.html),
+  and [tools](https://cgund98.github.io/gopi/reference/tools.html).
+
+The pages are markdown under [`docs/src/`](docs/src/index.md). Run `make docs-serve`
+to read them locally, or `make docs` to build the site.
+
+## Development
+
+Run gopi from a clone:
+
+```bash
+git clone https://github.com/cgund98/gopi
+cd gopi
 go run ./cmd/gopi
 ```
 
-Optional: `-workspace <dir>`. The default workspace is the current directory. `-resume` opens the newest saved session instead of an empty chat. With `-workspace`, it opens the newest session for that directory. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
+Run `make test` for the test suite and `make lint` for the linter. Pushes run
+lint, tests, and a format check. Merging a release pull request tags the module
+and publishes it to the Go module proxy.
 
-Gopi captures the mouse so the wheel scrolls the chat, the plan viewer, and the review file pane. Shift with the up or down arrow scrolls ten lines at a time. To select text, hold Option while dragging in iTerm, or Shift in most other terminals. `/mouse off` hands the mouse back to the terminal for plain selection, and `/mouse on` restores wheel scrolling. `/mouse` alone toggles it.
+## License
 
-Pushing to GitHub runs lint, tests, and a format check. Pushes to `main` open a release pull request through release-please. Merging that pull request tags the module and publishes it to the Go module proxy. Actions must be allowed to create and approve pull requests.
-
-## Library
-
-`cmd/gopi` is the built binary. It starts the same program as `gopi.Run` with the built-in tools. Another Go program can add a `gogent.Tool` to a mode. The tool is compiled into that program. The stock binary does not load plugins.
-
-```go
-err := gopi.Run(ctx,
-    gopi.WithWorkspace(dir),
-    gopi.WithTool(gopi.ModeAgent, myTool{}),
-    gopi.WithTool(gopi.ModeAsk, myTool{}),
-)
-```
-
-`WithTool` adds the tool only to that mode. It is not added to the delegate child. A name that matches a built-in tool fails at startup.
-
-A tool that needs credentials uses `WithToolFactory`. Gopi calls the factory at startup with a `ToolEnv`, and `env.Secret(name)` reads that name from `~/.gopi/secrets.toml`. A missing name stops startup. The value stays in the factory and is never passed into a shell call. `env.SecretPath(name)` returns the file behind a file secret, for a tool that must write a refreshed token back.
-
-```go
-gopi.WithToolFactory(gopi.ModeAgent, func(env gopi.ToolEnv) (gogent.Tool, error) {
-    token, err := env.Secret("gcal_token")
-    if err != nil {
-        return nil, err
-    }
-    return calendar.New(token), nil
-})
-```
-
-A custom tool can also implement `gopi.ToolRenderer` to control how its calls look. `Headline` replaces the tool name on the `>` line, `RenderApproval` draws the approval body, and `RenderResult` draws a completed result. Each returns plain text in a `gopi.ToolView` (fields, lines, markdown, or `Hide`), and gopi applies its own frame, colors, and wrapping. An empty headline or a zero view keeps the default. Error results always use gopi's error rendering.
-
-```go
-func (t *Tool) Headline(args json.RawMessage) string { return "calendar " + operation(args) }
-
-func (t *Tool) RenderApproval(args json.RawMessage) gopi.ToolView {
-    return gopi.ToolView{Fields: []gopi.ToolField{{Label: "Summary", Value: summary(args)}}}
-}
-
-func (t *Tool) RenderResult(args, result json.RawMessage) gopi.ToolView {
-    return gopi.ToolView{Lines: eventLines(result)}
-}
-```
-
-## Configuration
-
-Gopi keeps its files in `~/.gopi`, mode `0700`. `GOPI_HOME` overrides that directory. The first launch creates `config.toml`.
-
-```toml
-model = "deepseek/deepseek-flash"
-max_iterations = 10
-effort = "none"           # none | low | medium | high
-
-[models]
-agent = "gpt-5.6-sol"     # empty uses model
-ask = ""
-plan = ""
-build = ""                # empty uses the agent model; the b key on a plan uses this
-
-[efforts]
-agent = ""                # empty uses effort
-ask = ""
-plan = ""                 # the b key on a plan uses the plan effort
-build = ""
-
-[sandbox]
-network = "deny"          # deny | allowlist
-
-[sandbox.network]
-allow = ["github.com", "proxy.golang.org", "*.npmjs.org"]
-deny = []                 # a deny entry beats an allow entry
-
-[instructions]
-project_doc_max_bytes = 32768
-fallback_files = []       # extra names beside AGENTS.md; empty by default
-skill_dirs = []           # each entry is a directory of <name>/SKILL.md
-
-[search]
-endpoint = ""             # empty uses Brave Search
-```
-
-`network` defaults to `deny`. `allowlist` sends shell traffic through a local proxy and still blocks private and metadata addresses. `unrestricted` is not a config setting. A single shell call can ask for `network_hosts` or `network = "unrestricted"`, and that call waits for approval.
-
-A name without a prefix uses OpenAI, a `kimi/` prefix uses Kimi, and a `deepseek/` prefix uses DeepSeek. Supported names are `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-4o`, `kimi/kimi-k2.6`, `deepseek/deepseek-flash`, and `deepseek/deepseek-v3`. The default is `deepseek/deepseek-flash`. An unknown name fails at startup, and a saved `/model` choice that is no longer supported falls back to the config. `kimi_api_key` in `secrets.toml` overrides `KIMI_API_KEY`, `deepseek_api_key` overrides `DEEPSEEK_API_KEY`, and `openai_api_key` overrides `OPENAI_API_KEY`. A key is required only when a resolved model uses that provider.
-
-`effort` sets how much the model thinks before it answers. `none` turns thinking off, `low`, `medium`, and `high` turn it up. The `[efforts]` table overrides `effort` per mode. DeepSeek and Kimi models enable thinking for any value except `none`. OpenAI maps the value straight to `reasoning_effort`, and gogent sends `none` for GPT-5 models with tools attached because Chat Completions rejects function tools otherwise. The default is `none`. `/effort <level>` sets it for the active mode for the rest of the chat, and the level shows next to the model name at the bottom of the screen.
-
-`web_search` calls `https://api.search.brave.com/res/v1/web/search` unless `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. The shell sandbox stays on its own network setting. `web_fetch` reads one public `http` or `https` URL on the host. It does not use the search key or open a socket inside `shell`.
-
-A `*` in a host pattern matches one DNS label, as in `*.npmjs.org`.
-
-### Custom tool config
-
-A `WithToolFactory` tool can read its own top-level table from `config.toml`. The table name is whatever the tool picks, for example `[calendar]`:
-
-```toml
-[calendar]
-default_calendar = "primary"
-```
-
-The factory decodes it with `env.Config(name, &v)`, where `v` is a pointer to a struct whose fields use `toml` tags:
-
-```go
-type config struct {
-    DefaultCalendar string `toml:"default_calendar"`
-}
-
-gopi.WithToolFactory(gopi.ModeAgent, func(env gopi.ToolEnv) (gogent.Tool, error) {
-    var cfg config
-    if err := env.Config("calendar", &cfg); err != nil {
-        return nil, err
-    }
-    return calendar.New(cfg.DefaultCalendar), nil
-})
-```
-
-A missing table is an error. Built-in tables (`model`, `models`, `efforts`, `sandbox`, `instructions`, `search`) are read by gopi and are not available this way. A project `.gopi/config.toml` is not loaded, so a custom table must be in `~/.gopi/config.toml`.
-
-### Prompts and skills
-
-These files are appended after the built-in prompt, in order:
-
-| File | When it loads |
-|------|----------------|
-| `~/.gopi/system.md` | Always, when the file exists |
-| `~/.gopi/AGENTS.md` | Always, when the file exists |
-| `AGENTS.md` from the git root down to the workspace | Trusted workspaces only. `AGENTS.override.md` replaces `AGENTS.md` in that directory |
-| Skill catalog | Name, description, and path. The skill body stays on disk |
-
-Each of those sections is capped at `project_doc_max_bytes`. The end of the section is kept.
-
-Skills are discovered from:
-
-1. `~/.gopi/skills/<name>/SKILL.md`
-2. `<name>/SKILL.md` inside each directory in `skill_dirs`
-3. `<workspace>/.gopi/skills/<name>/SKILL.md`, trusted workspaces only
-
-A skill file needs YAML frontmatter with `name` and `description`. A later skill with the same name replaces an earlier one. Restart gopi after adding or changing one.
-
-### Secrets
-
-`~/.gopi/secrets.toml` is mode `0600`. Keys are names. A value is a string, or a table that points at a file:
-
-```toml
-jira_api_token = "..."
-gcal_token = { file = "~/.secrets/gcal_token.json" }
-```
-
-Gopi reads a referenced file once at startup. The file must be mode `0600`. Its path becomes a protected path, so `read_file` asks for approval and the sandboxed shell cannot read it. `openai_api_key` in that file overrides `OPENAI_API_KEY`. Other values are redacted from tool results. For a JSON value, fields whose key names a token, secret, key, or password are redacted on their own too.
-
-Trust decisions for workspaces are stored in `~/.gopi/trust.json`. An untrusted workspace can be read, and it does not load project `AGENTS.md` or project skills.
+BSD Zero Clause License. See [LICENSE](LICENSE).
