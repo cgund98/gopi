@@ -114,3 +114,14 @@ func (t *Tool) RenderResult(args, result json.RawMessage) gopi.ToolView {
     return gopi.ToolView{Lines: eventLines(result)}
 }
 ```
+
+## Ready-made tools
+
+[gopi-tools](https://github.com/cgund98/gopi-tools) is a module of third-party
+tools built the same way. Import the package you want and register it with
+`WithTool` or `WithToolFactory`, or append the package's `Options` helper to your
+options. Only the packages you import are compiled in, and the
+[gopi-tools README](https://github.com/cgund98/gopi-tools) documents each one. See
+[Use gopi-tools and egopi](use-gopi-tools.md) and the
+[gopi-tools reference](../reference/gopi-tools.md).
+

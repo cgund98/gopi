@@ -12,6 +12,7 @@
 - [Write a skill](guides/write-a-skill.md)
 - [Add a custom tool](guides/add-a-custom-tool.md)
 - [Build with gopi as a library](guides/build-with-gopi.md)
+- [Use gopi-tools and egopi](guides/use-gopi-tools.md)
 - [Resume a session](guides/resume-a-session.md)
 - [Review changes](guides/review-changes.md)
 
@@ -32,6 +33,7 @@
 - [Configuration](reference/configuration.md)
 - [Slash commands](reference/slash-commands.md)
 - [Tools](reference/tools.md)
+- [gopi-tools](reference/gopi-tools.md)
 - [Models](reference/models.md)
 - [Environment variables](reference/environment-variables.md)
 - [File locations](reference/file-locations.md)

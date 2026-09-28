@@ -18,6 +18,7 @@ Task-focused pages. Each one gets you to a result.
 - [Write a skill](guides/write-a-skill.md) — add reusable instructions gopi can load on demand.
 - [Add a custom tool](guides/add-a-custom-tool.md) — extend gopi in your own Go program.
 - [Build with gopi as a library](guides/build-with-gopi.md) — embed the agent with `gopi.Run`.
+- [Use gopi-tools and egopi](guides/use-gopi-tools.md) — install egopi and build a subset of its tools.
 - [Resume a session](guides/resume-a-session.md) — reopen a saved chat and its grants.
 - [Review changes](guides/review-changes.md) — keep or revert each edit gopi made, as a diff.
 
@@ -42,6 +43,7 @@ Lookups. Exact keys, flags, names, and paths.
 - [Configuration](reference/configuration.md) — every key in `config.toml`.
 - [Slash commands](reference/slash-commands.md) — in-chat commands.
 - [Tools](reference/tools.md) — every built-in tool, its arguments, and when it pauses.
+- [gopi-tools](reference/gopi-tools.md) — the extension module and the egopi binary.
 - [Models](reference/models.md) — supported model names, context windows, and prices.
 - [Environment variables](reference/environment-variables.md) — `GOPI_HOME`, provider keys, and `.env` files.
 - [File locations](reference/file-locations.md) — the `~/.gopi` layout and saved sessions.

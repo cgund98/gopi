@@ -22,7 +22,9 @@ active mode are offered to the model.
 
 A custom tool added with `WithTool` or `WithToolFactory` is registered for the
 mode you name, and is not added to a subagent. See
-[Add a custom tool](../guides/add-a-custom-tool.md).
+[Add a custom tool](../guides/add-a-custom-tool.md). The separate
+[gopi-tools](gopi-tools.md) module adds more tools, and a program can select
+which to include.
 
 Each tool decides for itself whether a call needs approval, based on that call's
 arguments. See [Permissions and approval](../concepts/permissions-and-approval.md).
