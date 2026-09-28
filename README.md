@@ -50,6 +50,10 @@ walkthrough.
   whole file, and a rejected hunk reverts to the original.
 - **Extensible** — add a tool from your own Go program with `gopi.WithTool`, or
   embed the agent with `gopi.Run`.
+- **Third-party tools** — the
+  [gopi-tools](https://github.com/cgund98/gopi-tools) module packages tools you
+  can compile into your own build, and `egopi` is gopi with all of them. See
+  [Use gopi-tools](https://cgund98.github.io/gopi/guides/use-gopi-tools.html).
 
 ## Documentation
 

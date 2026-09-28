@@ -54,3 +54,6 @@ tool fails at startup.
 
 See [Add a custom tool](add-a-custom-tool.md) for credentials, tool
 configuration, and result rendering.
+
+`egopi` is a working example of a `gopi.Run` program that adds extra tools. See
+[Use gopi-tools and egopi](use-gopi-tools.md).
