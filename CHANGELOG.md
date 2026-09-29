@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/cgund98/gopi/compare/v0.5.1...v0.6.0) (2026-09-29)
+
+
+### Features
+
+* add Anthropic Claude model provider ([d44f0eb](https://github.com/cgund98/gopi/commit/d44f0eb81a80d080d7a90fc06e0b213cd18b7daa))
+* add Anthropic Claude model provider ([06bdf87](https://github.com/cgund98/gopi/commit/06bdf87dacfd288a965f120b95dbd1a5e048209b))
+
 ## [0.5.1](https://github.com/cgund98/gopi/compare/v0.5.0...v0.5.1) (2026-09-29)
 
 
