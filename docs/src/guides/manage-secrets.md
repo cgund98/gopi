@@ -39,6 +39,7 @@ name in `secrets.toml` overrides the environment variable:
 | `openai_api_key` | `OPENAI_API_KEY` |
 | `kimi_api_key` | `KIMI_API_KEY` |
 | `deepseek_api_key` | `DEEPSEEK_API_KEY` |
+| `anthropic_api_key` | `ANTHROPIC_API_KEY` |
 
 ```toml
 deepseek_api_key = "sk-..."

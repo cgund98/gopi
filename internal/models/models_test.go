@@ -28,6 +28,16 @@ func TestEstimateCostUsesPrices(t *testing.T) {
 	if err != nil || provider != ProviderDeepSeek || id != "deepseek-flash" {
 		t.Fatalf("deepseek = %q %q %v", provider, id, err)
 	}
+	provider, id, err = Parse("claude-sonnet-5-5")
+	if err != nil || provider != ProviderAnthropic || id != "claude-sonnet-5-5" {
+		t.Fatalf("anthropic = %q %q %v", provider, id, err)
+	}
+	if ContextWindow("claude-opus-5-5") != 1000000 {
+		t.Fatalf("opus window = %d", ContextWindow("claude-opus-5-5"))
+	}
+	if ContextWindow("claude-haiku-4-5") != 200000 {
+		t.Fatalf("haiku window = %d", ContextWindow("claude-haiku-4-5"))
+	}
 	if _, _, err := Parse("gpt-4o-mini"); err == nil {
 		t.Fatal("gpt-4o-mini is still supported")
 	}

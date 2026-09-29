@@ -208,6 +208,34 @@ func TestLoadKimiOnlySkipsOpenAIKey(t *testing.T) {
 	}
 }
 
+func TestLoadAnthropicModelRequiresKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("KIMI_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("model = \"claude-sonnet-5-5\"\n")
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected anthropic key required")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets.toml"), []byte(gopisecrets.AnthropicAPIKey+" = \"ant-key\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AnthropicAPIKey != "ant-key" || cfg.Model != "claude-sonnet-5-5" {
+		t.Fatalf("cfg model %q key %q", cfg.Model, cfg.AnthropicAPIKey)
+	}
+}
+
 func TestLoadEffortConfig(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")

@@ -5,9 +5,10 @@ default in `~/.gopi/config.toml`, override it per mode, or switch it mid-chat
 with `/model`. See [Models](../reference/models.md) for the supported names and
 prices.
 
-A name without a prefix uses OpenAI, a `kimi/` prefix uses Kimi, and a
-`deepseek/` prefix uses DeepSeek. An unknown name fails at startup. A saved
-`/model` choice that is no longer supported falls back to the config.
+A name without a prefix uses OpenAI, a `kimi/` prefix uses Kimi, a `deepseek/`
+prefix uses DeepSeek, and a name that starts with `claude` uses Anthropic (no
+prefix). An unknown name fails at startup. A saved `/model` choice that is no
+longer supported falls back to the config.
 
 ## Set the default
 
@@ -82,8 +83,10 @@ Or change it mid-chat:
 ```
 
 DeepSeek and Kimi models enable thinking for any value except `none`. OpenAI
-maps the value to `reasoning_effort`. The level shows next to the model name at
-the bottom of the screen.
+maps the value to `reasoning_effort`. Anthropic maps it to `output_config.effort`
+for any value except `none`; there `none` and an empty value leave the model
+default in place. The level shows next to the model name at the bottom of the
+screen.
 
 ## Watch the cost
 

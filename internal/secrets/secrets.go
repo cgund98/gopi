@@ -13,10 +13,11 @@ import (
 const fileName = "secrets.toml"
 
 const (
-	OpenAIAPIKey   = "openai_api_key"
-	KimiAPIKey     = "kimi_api_key"
-	DeepSeekAPIKey = "deepseek_api_key"
-	SearchAPIKey   = "search_api_key"
+	OpenAIAPIKey    = "openai_api_key"
+	KimiAPIKey      = "kimi_api_key"
+	DeepSeekAPIKey  = "deepseek_api_key"
+	AnthropicAPIKey = "anthropic_api_key"
+	SearchAPIKey    = "search_api_key"
 )
 
 // Load reads ~/.gopi/secrets.toml. A missing file yields empty maps.
