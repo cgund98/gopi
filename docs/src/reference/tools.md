@@ -84,14 +84,16 @@ Ask once to read a file or directory for the rest of the chat.
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `path` | string | yes | File or directory outside the workspace. |
+| `path` | string | yes | File or directory outside the workspace. A leading `~` expands to your home directory. |
 
 Approving adds the path to the session's read grants. Later `read_file`, `grep`,
-`find`, and sandboxed `shell` calls use it without another prompt. `/allowpath`
-does the same thing from the composer.
+`find`, and sandboxed `shell` calls use it without another prompt, and
+`edit_file` can write a file under it. `/allowpath` does the same thing from the
+composer.
 
-Limits: it is read-only, it does not open a protected child such as an `.env`
-inside a granted directory, and a subagent cannot call it. See
+Limits: sandboxed `shell` writes still ask every time, it does not open a
+protected path such as an `.env` inside a granted directory, and a subagent
+cannot call it. See
 [Read grants](../concepts/permissions-and-approval.md#read-grants).
 
 ## shell
@@ -138,8 +140,10 @@ Replace an exact snippet, or create a file.
 an error naming the count. An empty `old` creates a new file, and is refused when
 the file already exists. Refused outright when the workspace is untrusted.
 
-Pauses for a protected path or a write outside the workspace. Each successful
-first write of a path is recorded so `/review` can show the change.
+Pauses for a protected path or a write outside the workspace. A path outside the
+workspace that a session grant already opened does not pause again, but a
+protected path inside the grant still does. Each successful first write of a path
+is recorded so `/review` can show the change.
 
 ## write_plan
 
@@ -203,6 +207,10 @@ of 80, 443, or none, and the host must resolve to a public address — loopback,
 private, link-local, CGNAT, multicast, and cloud metadata addresses are refused. A
 redirect to a different host is refused. HTML is reduced to title and text,
 capped at 8000 runes and 1 MiB. Never pauses; page text is untrusted.
+
+The system prompt names gopi's own documentation, so a question about how gopi
+works is answered from the published pages rather than from the prompt text. See
+[The documentation pointer](../concepts/instructions.md#the-documentation-pointer).
 
 ## delegate
 

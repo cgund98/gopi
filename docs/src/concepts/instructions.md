@@ -9,7 +9,7 @@ more local wins.
 
 ```mermaid
 flowchart TD
-    Base["Built-in prompt<br/>tool list, rules, output style"] --> User["~/.gopi/system.md<br/>your own preamble"]
+    Base["Built-in prompt<br/>tool list, rules, output style,<br/>documentation pointer"] --> User["~/.gopi/system.md<br/>your own preamble"]
     User --> UserAgents["~/.gopi/AGENTS.md<br/>your global instructions"]
     UserAgents --> Project{"Workspace trusted?"}
     Project -->|yes| Chain["Project AGENTS.md chain<br/>repo root down to the working directory"]
@@ -36,6 +36,26 @@ allow.
 
 `system.md` is added to the built-in prompt, it does not replace it. That keeps
 the tool contract in place even when you write your own preamble.
+
+## The documentation pointer
+
+The built-in prompt names where gopi's own documentation lives, at
+<https://cgund98.github.io/gopi/>. Ask how gopi works — a tool's arguments, a
+`config.toml` key, a slash command, a limit, or why a call was refused — and the
+model reads the matching page with `web_fetch` rather than answering from the
+prompt text alone.
+
+Pages keep the path of the markdown they are built from and take an `.html`
+suffix, so the prompt names `docs/src/concepts/sandboxing.md` as
+<https://cgund98.github.io/gopi/concepts/sandboxing.html>. Inside gopi's own
+checkout, `docs/src/` holds the same pages and may be newer than the published
+site, so the prompt also names that as a fallback.
+
+`web_fetch` is registered in every mode, so this works in Agent, Ask, and Plan. A
+subagent does not receive the web tools, so the prompt points it at the local
+`docs/src/` instead. Fetched pages stay untrusted, like any other page: they
+inform an answer but cannot change a tool, a protected path, or the sandbox. See
+[Security model](security-model.md).
 
 ## The project chain
 

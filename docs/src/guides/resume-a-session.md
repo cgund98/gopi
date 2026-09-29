@@ -36,13 +36,14 @@ keeps its mode, its per-mode model and effort choices, and its review state.
 ## What carries over
 
 - **Read grants.** A path granted with `/allowpath` or `grant_read` stays
-  readable for the rest of the chat, including after a resume.
+  readable for the rest of the chat, including after a resume. `edit_file` may
+  also write under it.
 - **The transcript.** gopi restores the messages so you can keep going.
 - **The review list.** Pending file edits are still there under `/review`. See
   [Review changes](review-changes.md).
 
-Write access and unsandboxed commands always ask again; only read grants
-persist. See [Permissions and approval](../concepts/permissions-and-approval.md).
+Sandboxed `shell` writes and unsandboxed commands always ask again; only read
+grants persist. See [Permissions and approval](../concepts/permissions-and-approval.md).
 
 ## Where sessions live
 

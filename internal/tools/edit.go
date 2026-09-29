@@ -36,7 +36,11 @@ type EditFile struct {
 	Root      workspace.Root
 	Workspace trust.Workspace
 	Rules     policy.Rules
-	OnWrite   func(EditNote)
+	// Grants opens a path outside the workspace that this chat already approved
+	// for reading, so editing it does not ask a second time. A protected path is
+	// still refused; see RequiresApproval.
+	Grants  *ReadGrants
+	OnWrite func(EditNote)
 
 	seen map[string]bool
 }
@@ -64,7 +68,7 @@ func (t *EditFile) Seed(paths []string) {
 func (t *EditFile) Name() string { return "edit_file" }
 
 func (t *EditFile) Description() string {
-	return "Replace an exact text snippet in a workspace file, or create a new file when old is empty. An empty old is refused when the file already exists. Copy old as a few unique lines exactly as read_file returned them, including tabs; make several small edits rather than one large one. Protected paths and paths outside the workspace ask for approval. Refused when the workspace is untrusted."
+	return "Replace an exact text snippet in a workspace file, or create a new file when old is empty. An empty old is refused when the file already exists. Copy old as a few unique lines exactly as read_file returned them, including tabs; make several small edits rather than one large one. Protected paths and paths outside the workspace ask for approval, except that a path outside the workspace already opened by grant_read does not ask again. Refused when the workspace is untrusted."
 }
 
 func (t *EditFile) Parameters() json.RawMessage { return schemaFor(new(editFileArgs)) }
@@ -80,7 +84,7 @@ func (t *EditFile) RequiresApproval(_ context.Context, raw json.RawMessage) (gog
 	if rule, ok := t.Rules.MatchWrite(resolved); ok {
 		return gogent.ApprovalDecision{Required: true, Reason: "Protected path " + rule + ": " + editDisplayPath(raw)}, nil
 	}
-	if outside {
+	if outside && !t.Grants.Covers(resolved) {
 		return gogent.ApprovalDecision{Required: true, Reason: grantReason(nil, []string{resolved})}, nil
 	}
 	return gogent.ApprovalDecision{}, nil

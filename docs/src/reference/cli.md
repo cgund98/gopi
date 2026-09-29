@@ -8,7 +8,7 @@ gopi [flags] [workspace]
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `workspace` | current directory | Directory to work in. |
+| `workspace` | current directory | Directory to work in. A leading `~` expands to your home directory. |
 
 ## Flags
 
@@ -25,6 +25,9 @@ gopi ~/code/app --resume    # reopen the newest session for that directory
 
 Flags come before the workspace. A single `-` also works (`-resume`), matching
 Go's flag syntax. Passing more than one workspace is an error.
+
+A workspace of `~` or `~/path` expands to your home directory, so `gopi ~/code/app`
+works as it does in a shell.
 
 With a workspace argument, `--resume` opens the newest session for that
 directory.

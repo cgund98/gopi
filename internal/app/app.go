@@ -79,9 +79,9 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 	if err != nil {
 		return nil, fmt.Errorf("build path policy: %w", err)
 	}
-	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust, Rules: rules}
-	plan := &tools.WritePlan{Root: root, Workspace: workspaceTrust}
 	grants := &tools.ReadGrants{Rules: rules}
+	edit := &tools.EditFile{Root: root, Workspace: workspaceTrust, Rules: rules, Grants: grants}
+	plan := &tools.WritePlan{Root: root, Workspace: workspaceTrust}
 	for _, dir := range prompt.SkillRoots(promptOptions(cfg, root.Path, workspaceTrust)) {
 		grants.Add(dir)
 	}

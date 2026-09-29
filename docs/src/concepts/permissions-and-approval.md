@@ -87,24 +87,34 @@ narrower instead of being stuck.
 
 Approving every individual read outside the workspace gets tedious, so there is a
 way to open a path for the rest of the chat: the `grant_read` tool, and the
-`/allowpath <path>` command.
+`/allowpath <path>` command. Both accept a leading `~`, which expands to your home
+directory the way a shell expands it, so `/allowpath ~/code` works. Only `~` and
+`~/` expand: `~someone` and a `~` inside a path are ordinary characters.
 
 ```mermaid
 flowchart TD
     Ask["grant_read on a directory"] --> Appr{"You approve"}
     Appr -->|yes| Open["Path becomes readable for the rest of this chat"]
     Open --> Later["Later read_file, grep, find, and<br/>sandboxed shell commands use it without asking"]
-    Open --> Protected["A protected child such as .env<br/>stays denied"]
+    Open --> Edit["edit_file may write a file<br/>under the grant without asking"]
+    Open --> Protected["A protected path such as .env<br/>stays denied, and still asks"]
 ```
 
 Three limits keep this from being a blanket yes:
 
-- **Read only.** Writes and unsandboxed commands still ask every time.
+- **`edit_file` only.** Sandboxed `shell` writes and unsandboxed commands still
+  ask every time, through `write_paths` or a profile change.
 - **Not a protected path.** A grant for a directory does not open an `.env` or a
   `.gopi` inside it. Those need their own approval, and the reason says which rule
   matched.
 - **Not inherited.** A subagent does not receive new grants. It can read a
   directory you already granted this chat, but it has no way to ask for another.
+
+A grant matters only outside the workspace. Inside it, the security floor and your
+`~/.gopi/ignore` file decide, and grants do not enter into it. Those ignore
+patterns are rooted at the workspace, so they never match a path beyond it: a
+granted directory outside the workspace is protected by the security floor alone,
+which is what still refuses an `.env`, a `*.pem`, or an `id_rsa` inside it.
 
 Grants are stored with the session, so resuming a chat brings them back.
 

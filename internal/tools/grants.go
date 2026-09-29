@@ -80,7 +80,7 @@ type GrantRead struct {
 func (t *GrantRead) Name() string { return "grant_read" }
 
 func (t *GrantRead) Description() string {
-	return "Ask to read a file or directory outside the workspace for the rest of this chat. Call this when later reads, searches, or shell commands will need that directory more than once. One-off files still use read_paths. Writes stay on write_paths and still ask every time. A directory grant does not include protected files under it such as .env or .gopi; those need their own approval. A path already granted does not ask again."
+	return "Ask to read a file or directory outside the workspace for the rest of this chat. Call this when later reads, searches, or shell commands will need that directory more than once. One-off files still use read_paths. edit_file may then write under the grant; sandboxed shell writes still use write_paths and ask every time. A directory grant does not include protected paths under it such as .env or .gopi; those need their own approval. A path already granted does not ask again."
 }
 
 func (t *GrantRead) Parameters() json.RawMessage { return schemaFor(new(grantReadArgs)) }

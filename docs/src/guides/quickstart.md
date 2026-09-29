@@ -79,7 +79,7 @@ trust it.
 
 A path outside the workspace, or a protected path inside it, pauses for approval.
 Approve to read that one file, or use `/allowpath` and `grant_read` to open a
-directory for the rest of the chat. See
+directory for the rest of the chat, including for edits under it. See
 [Permissions and approval](../concepts/permissions-and-approval.md).
 
 ## Give it a task

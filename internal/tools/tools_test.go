@@ -528,6 +528,182 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+func TestEditGrantOpensPathOutsideWorkspace(t *testing.T) {
+	root := openTemp(t)
+	gopiHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gopiHome, "ignore"), []byte("build\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := policy.Build(root.Path, gopiHome, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	resolved, outsideFlag, err := root.Canonical(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outsideFlag {
+		t.Fatalf("%s resolved inside the workspace", outside)
+	}
+	grants := &ReadGrants{Rules: rules}
+	grants.Add(resolved)
+	tool := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted, Rules: rules, Grants: grants}
+
+	asks := func(path string) (bool, string) {
+		t.Helper()
+		raw := json.RawMessage(`{"path":` + mustJSON(t, path) + `,"old":"","new":"x"}`)
+		decision, err := tool.RequiresApproval(context.Background(), raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decision.Required, decision.Reason
+	}
+
+	// A granted directory outside the workspace carries over to an edit, so the
+	// same path does not need a second approval.
+	if required, reason := asks(filepath.Join(resolved, "notes.md")); required {
+		t.Fatalf("a granted outside file asked again: %s", reason)
+	}
+	// A file that does not exist yet under the grant is covered too.
+	if required, reason := asks(filepath.Join(resolved, "new.md")); required {
+		t.Fatalf("a new file under a granted directory asked: %s", reason)
+	}
+	// The floor still wins inside a granted directory.
+	for _, name := range []string{".env", "key.pem", "id_rsa"} {
+		required, reason := asks(filepath.Join(resolved, name))
+		if !required {
+			t.Fatalf("%s inside a granted directory must still ask", name)
+		}
+		if !strings.Contains(reason, "Protected path") {
+			t.Fatalf("%s reason = %q", name, reason)
+		}
+	}
+	// An ungranted outside path, and a sibling of the grant, still ask.
+	other, _, err := root.Canonical(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if required, _ := asks(filepath.Join(other, "notes.md")); !required {
+		t.Fatal("an ungranted outside path must ask")
+	}
+	if required, _ := asks(filepath.Join(filepath.Dir(resolved), "notes.md")); !required {
+		t.Fatal("a sibling of the grant must ask")
+	}
+	// A grant reaches no further than the rule it was carved from: an ignored
+	// path inside the workspace still asks, and a plain one still does not.
+	if required, reason := asks("build/out.txt"); !required {
+		t.Fatalf("an ignored workspace path must ask: %s", reason)
+	}
+	if required, reason := asks("note.txt"); required {
+		t.Fatalf("a plain workspace file asked: %s", reason)
+	}
+
+	// The grant must actually let the write through, not just hide the card.
+	note := filepath.Join(resolved, "notes.md")
+	if err := os.WriteFile(note, []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"path":` + mustJSON(t, note) + `,"old":"before","new":"after"}`)
+	if _, err := tool.Execute(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(note)
+	if err != nil || string(body) != "after\n" {
+		t.Fatalf("body = %q err = %v", body, err)
+	}
+}
+
+func TestEditGrantDoesNotOpenProtectedWorkspacePath(t *testing.T) {
+	root := openTemp(t)
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := &ReadGrants{Rules: rules}
+	gopiDir, _, err := root.Canonical(".gopi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants.Add(gopiDir)
+	tool := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted, Rules: rules, Grants: grants}
+	raw := json.RawMessage(`{"path":".gopi/config.toml","old":"","new":"x"}`)
+	decision, err := tool.RequiresApproval(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required || !strings.Contains(decision.Reason, "Protected path") {
+		t.Fatalf("a protected workspace path must still ask: %#v", decision)
+	}
+}
+
+func TestEditWithoutGrantsStillAsksOutside(t *testing.T) {
+	root := openTemp(t)
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, _, err := root.Canonical(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted, Rules: rules}
+	raw := json.RawMessage(`{"path":` + mustJSON(t, filepath.Join(outside, "notes.md")) + `,"old":"","new":"x"}`)
+	decision, err := tool.RequiresApproval(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required {
+		t.Fatalf("a nil grant store must still ask: %#v", decision)
+	}
+}
+
+func TestGrantAndEditShareTildeExpansion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := openTemp(t)
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted := filepath.Join(resolvedHome, "code")
+
+	// /allowpath and grant_read both resolve through Root.Canonical, so a ~ path
+	// is stored as the canonical home path rather than inside the workspace.
+	grants := &ReadGrants{Rules: rules}
+	grant := &GrantRead{Root: root, Grants: grants}
+	if _, err := grant.Execute(context.Background(), json.RawMessage(`{"path":"~/code"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if !grants.Covers(granted) {
+		t.Fatalf("granted = %#v, want %s", grants.List(), granted)
+	}
+
+	edit := &EditFile{Root: root, Workspace: trust.WorkspaceTrusted, Rules: rules, Grants: grants}
+	raw := json.RawMessage(`{"path":"~/code/notes.md","old":"","new":"hello\n"}`)
+	decision, err := edit.RequiresApproval(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Required {
+		t.Fatalf("a granted ~ path asked again: %s", decision.Reason)
+	}
+	if _, err := edit.Execute(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(resolvedHome, "code", "notes.md"))
+	if err != nil || !strings.Contains(string(body), "hello") {
+		t.Fatalf("body = %q err = %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(root.Path, "~")); !os.IsNotExist(err) {
+		t.Fatal("the ~ path was joined to the workspace instead of the home directory")
+	}
+}
+
 func TestGrepSkipsProtectedDirectory(t *testing.T) {
 	root := openTemp(t)
 	home := t.TempDir()
