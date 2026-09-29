@@ -447,9 +447,91 @@ func TestGrepOmitsProtectedFile(t *testing.T) {
 	}
 }
 
+func TestFindAndReadPlansWithoutApproval(t *testing.T) {
+	root := openTemp(t)
+	plans := filepath.Join(root.Path, ".gopi", "plans")
+	if err := os.MkdirAll(plans, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plans, "ship-abc.md"), []byte("body\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root.Path, ".gopi", "config.toml"), []byte("model = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	findTool := &Find{Root: root, Rules: rules}
+	decision, err := findTool.RequiresApproval(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Required {
+		t.Fatalf("find decision = %#v, want no approval to walk the workspace", decision)
+	}
+	listed, err := findTool.Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Files  []string `json:"files"`
+		Denied []struct {
+			Path string `json:"path"`
+		} `json:"denied"`
+	}
+	if err := json.Unmarshal(listed, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(payload.Files, ".gopi/plans/ship-abc.md") {
+		t.Fatalf("files = %v, want the plan listed", payload.Files)
+	}
+	if containsString(payload.Files, ".gopi/config.toml") {
+		t.Fatalf("files = %v, must not list .gopi/config.toml", payload.Files)
+	}
+	if len(payload.Denied) != 1 || payload.Denied[0].Path != ".gopi/config.toml" {
+		t.Fatalf("denied = %v, want .gopi/config.toml", payload.Denied)
+	}
+
+	readTool := &ReadFile{Root: root, Rules: rules}
+	raw := json.RawMessage(`{"path":".gopi/plans/ship-abc.md"}`)
+	decision, err = readTool.RequiresApproval(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Required {
+		t.Fatalf("read decision = %#v, want plans readable without approval", decision)
+	}
+	body, err := readTool.Execute(context.Background(), raw)
+	if err != nil || !strings.Contains(string(body), "body") {
+		t.Fatalf("read = %s err = %v", body, err)
+	}
+
+	config := json.RawMessage(`{"path":".gopi/config.toml"}`)
+	decision, err = readTool.RequiresApproval(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Required {
+		t.Fatal("reading .gopi/config.toml must still ask for approval")
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGrepSkipsProtectedDirectory(t *testing.T) {
 	root := openTemp(t)
-	if err := os.WriteFile(filepath.Join(root.Path, ".gitignore"), []byte("scratch\n"), 0o600); err != nil {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "ignore"), []byte("scratch\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cache := filepath.Join(root.Path, "scratch", "demo", ".tmp", "cache")
@@ -461,7 +543,7 @@ func TestGrepSkipsProtectedDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	rules, err := policy.Build(root.Path, home, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +621,8 @@ func TestFindProtectedPathRequiresApproval(t *testing.T) {
 
 func TestGrepAndFindHonorDirectoryElevation(t *testing.T) {
 	root := openTemp(t)
-	if err := os.WriteFile(filepath.Join(root.Path, ".gitignore"), []byte("scratch\n"), 0o600); err != nil {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "ignore"), []byte("scratch\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cache := filepath.Join(root.Path, "scratch", "demo")
@@ -561,7 +644,7 @@ func TestGrepAndFindHonorDirectoryElevation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cache, ".gopi", "plans", "secret.md"), []byte("needle\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	rules, err := policy.Build(root.Path, home, "")
 	if err != nil {
 		t.Fatal(err)
 	}

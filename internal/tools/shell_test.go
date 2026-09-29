@@ -207,6 +207,41 @@ func TestShellEscape(t *testing.T) {
 	}
 }
 
+func TestShellReadsPlansButNotGopiConfig(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("sandboxed shell runs on macOS")
+	}
+	root := openTemp(t)
+	plans := filepath.Join(root.Path, ".gopi", "plans")
+	if err := os.MkdirAll(plans, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plans, "ship.md"), []byte("plan-body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plans, ".env"), []byte("plan-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root.Path, ".gopi", "config.toml"), []byte("gopi-config"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Shell{Root: root, HomeDir: t.TempDir()}
+	if read := runShell(t, tool, `cat .gopi/plans/ship.md`); !containsOutput(read, "plan-body") {
+		t.Fatalf("a plan must be readable: %s", read)
+	}
+	runShell(t, tool, `echo edited > .gopi/plans/ship.md`)
+	if body, err := os.ReadFile(filepath.Join(plans, "ship.md")); err != nil || !strings.Contains(string(body), "edited") {
+		t.Fatalf("a plan must be writable: %q err = %v", body, err)
+	}
+	if read := runShell(t, tool, `cat .gopi/config.toml`); containsOutput(read, "gopi-config") {
+		t.Fatalf("sandbox read .gopi/config.toml: %s", read)
+	}
+	if read := runShell(t, tool, `cat .gopi/plans/.env`); containsOutput(read, "plan-secret") {
+		t.Fatalf("sandbox read a .env inside plans: %s", read)
+	}
+}
+
 func runShell(t *testing.T, tool *Shell, command string) json.RawMessage {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{"command": command})

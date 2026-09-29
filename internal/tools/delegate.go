@@ -33,6 +33,8 @@ type Delegate struct {
 	Network    string
 	AllowHosts []string
 	DenyHosts  []string
+	// RespectGitignore is passed to the child shell's deny set.
+	RespectGitignore bool
 	// SecretFiles are passed to the child shell so its sandbox denies them.
 	SecretFiles []string
 	Redact      func(string) string
@@ -145,13 +147,14 @@ func (t *Delegate) timeout() time.Duration {
 func (t *Delegate) childRegistry() (*gogent.ToolRegistry, error) {
 	registry := gogent.NewToolRegistry()
 	shell := &Shell{
-		Root:        t.Root,
-		HomeDir:     t.HomeDir,
-		Network:     t.Network,
-		AllowHosts:  t.AllowHosts,
-		DenyHosts:   t.DenyHosts,
-		SecretFiles: t.SecretFiles,
-		Grants:      t.Grants,
+		Root:             t.Root,
+		HomeDir:          t.HomeDir,
+		Network:          t.Network,
+		AllowHosts:       t.AllowHosts,
+		DenyHosts:        t.DenyHosts,
+		SecretFiles:      t.SecretFiles,
+		Grants:           t.Grants,
+		RespectGitignore: t.RespectGitignore,
 	}
 	list := []gogent.Tool{
 		failClosed{inner: &ReadFile{Root: t.Root, Rules: t.Rules, Grants: t.Grants}},

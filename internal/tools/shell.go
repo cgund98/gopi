@@ -35,6 +35,8 @@ type Shell struct {
 	AllowHosts []string
 	DenyHosts  []string
 	Grants     *ReadGrants
+	// RespectGitignore denies the repository's ignore patterns too.
+	RespectGitignore bool
 	// SecretFiles are files secrets.toml references; the sandbox denies them.
 	SecretFiles []string
 }
@@ -118,7 +120,13 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		return accessDenied(cwd, "sandboxed shell is only available on macOS"), nil
 	}
 
-	rules, err := policy.Build(t.Root.Path, t.HomeDir, executablePath(), t.SecretFiles...)
+	rules, err := policy.BuildWith(policy.Options{
+		Workspace:        t.Root.Path,
+		GopiHome:         t.HomeDir,
+		Binary:           executablePath(),
+		RespectGitignore: t.RespectGitignore,
+		Protected:        t.SecretFiles,
+	})
 	if err != nil {
 		t.audit(command, cwd, sandbox.ProfileSandbox, "denied", -1, time.Since(started))
 		return accessDenied(cwd, err.Error()), nil
@@ -154,6 +162,8 @@ func (t *Shell) Execute(ctx context.Context, raw json.RawMessage) (json.RawMessa
 		Home:         homeDir(),
 		DenyRead:     rules.DenyRead,
 		DenyWrite:    rules.DenyWrite,
+		OpenReads:    rules.Open,
+		OpenWrites:   rules.Open,
 		ExtraReads:   reads,
 		ExtraWrites:  writes,
 		SessionReads: sessionReads(t.Grants, args.Profile == sandbox.ProfileUnsandboxed),

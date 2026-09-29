@@ -67,6 +67,26 @@ func SeatbeltProfile(profile Profile) (string, error) {
 			writeRegex(&b, "deny file-write*", pattern)
 		}
 	}
+	// Open directories are carved out of the floor after every deny the rules
+	// above emit, so a re-applied denial cannot close them again. The denies that
+	// do not match an open directory are re-applied once, after every read or
+	// write allow, so opening .gopi/plans does not also open a .env or a *.pem
+	// inside those plans.
+	openReads := unionPaths(profile.OpenReads, profile.OpenWrites)
+	for _, path := range openReads {
+		writeSubpath(&b, "allow file-read*", path)
+	}
+	for _, pattern := range unmatchedDenies(profile.DenyRead, openReads) {
+		writeRegex(&b, "deny file-read*", pattern)
+	}
+	for _, path := range profile.OpenWrites {
+		writeSubpath(&b, "allow file-write*", path)
+	}
+	for _, pattern := range unmatchedDenies(profile.DenyWrite, profile.OpenWrites) {
+		writeRegex(&b, "deny file-write*", pattern)
+	}
+	// An approved protected file is allowed last, after the open directories, so
+	// one approved .env stays readable even when it sits inside an open one.
 	for _, path := range protectedFiles {
 		writeSubpath(&b, "allow file-read*", path)
 	}
@@ -187,4 +207,20 @@ func pathMatchesAnyPattern(paths []string, pattern string) bool {
 func extraIsDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// unionPaths concatenates path lists in order, dropping repeats.
+func unionPaths(lists ...[]string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, list := range lists {
+		for _, path := range list {
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	return out
 }

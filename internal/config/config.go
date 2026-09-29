@@ -57,8 +57,12 @@ type EffortsFile struct {
 
 // SandboxFile is the [sandbox] table.
 type SandboxFile struct {
-	Network string    `toml:"network"`
-	Hosts   HostsFile `toml:"hosts"`
+	Network string `toml:"network"`
+	// RespectGitignore adds the repository's .gitignore and .git/info/exclude to
+	// the deny set. Off by default: a .gitignore says what git tracks, not what
+	// the agent may read.
+	RespectGitignore bool      `toml:"respect_gitignore"`
+	Hosts            HostsFile `toml:"hosts"`
 }
 
 // InstructionsFile is the [instructions] table.
@@ -128,6 +132,7 @@ type Config struct {
 	Secrets            map[string]string
 	SecretFiles        map[string]string
 	Network            string
+	RespectGitignore   bool
 	AllowHosts         []string
 	DenyHosts          []string
 	UserPrompt         string
@@ -271,6 +276,7 @@ func Load(dir string) (Config, error) {
 		Secrets:            broker,
 		SecretFiles:        secretFiles,
 		Network:            file.Sandbox.Network,
+		RespectGitignore:   file.Sandbox.RespectGitignore,
 		AllowHosts:         file.Sandbox.Hosts.Allow,
 		DenyHosts:          file.Sandbox.Hosts.Deny,
 		UserPrompt:         userPrompt,

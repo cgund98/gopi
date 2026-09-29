@@ -70,7 +70,12 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		secretFiles = append(secretFiles, path)
 	}
 	sort.Strings(secretFiles)
-	rules, err := policy.Build(root.Path, cfg.HomeDir, "", secretFiles...)
+	rules, err := policy.BuildWith(policy.Options{
+		Workspace:        root.Path,
+		GopiHome:         cfg.HomeDir,
+		RespectGitignore: cfg.RespectGitignore,
+		Protected:        secretFiles,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build path policy: %w", err)
 	}
@@ -86,7 +91,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		&tools.Find{Root: root, Rules: rules, Grants: grants},
 		&tools.GrantRead{Root: root, Grants: grants},
 	}
-	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Grants: grants, SecretFiles: secretFiles}
+	shell := &tools.Shell{Root: root, HomeDir: cfg.HomeDir, Network: cfg.Network, AllowHosts: cfg.AllowHosts, DenyHosts: cfg.DenyHosts, Grants: grants, SecretFiles: secretFiles, RespectGitignore: cfg.RespectGitignore}
 	search := &tools.WebSearch{Endpoint: cfg.SearchEndpoint, APIKey: cfg.Secrets[gopisecrets.SearchAPIKey]}
 	fetch := &tools.WebFetch{}
 	taskList := tools.NewTaskList(root)
@@ -117,16 +122,17 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		basePrompt: text,
 	}
 	delegate := &tools.Delegate{
-		Root:        root,
-		Rules:       rules,
-		HomeDir:     cfg.HomeDir,
-		Network:     cfg.Network,
-		AllowHosts:  cfg.AllowHosts,
-		DenyHosts:   cfg.DenyHosts,
-		SecretFiles: secretFiles,
-		Redact:      redact,
-		Grants:      grants,
-		Progress:    session.Subagent,
+		Root:             root,
+		Rules:            rules,
+		HomeDir:          cfg.HomeDir,
+		Network:          cfg.Network,
+		AllowHosts:       cfg.AllowHosts,
+		DenyHosts:        cfg.DenyHosts,
+		SecretFiles:      secretFiles,
+		RespectGitignore: cfg.RespectGitignore,
+		Redact:           redact,
+		Grants:           grants,
+		Progress:         session.Subagent,
 		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
 			return session.models.New(session.active, registry, session.basePrompt, session.effortFor(session.Mode))
 		},

@@ -54,6 +54,12 @@ gopi separates "may this call run" from "what can this process touch".
 | Redaction | Known secret values and common token shapes in results |
 | Per-call approval | Reaching outside the workspace, or widening the sandbox |
 
+One directory is deliberately outside the protected set: `<workspace>/.gopi/plans`
+is readable and writable like any other workspace file, because plans are
+agent-authored markdown. The floor still applies inside it, so a `.env` or a
+`*.pem` under `.gopi/plans` stays protected. See
+[Protected paths](sandboxing.md#protected-paths).
+
 ## Threats and controls
 
 | Threat | Control |
