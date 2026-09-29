@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	ProviderOpenAI   = "openai"
-	ProviderKimi     = "kimi"
-	ProviderDeepSeek = "deepseek"
+	ProviderOpenAI    = "openai"
+	ProviderKimi      = "kimi"
+	ProviderDeepSeek  = "deepseek"
+	ProviderAnthropic = "anthropic"
 )
 
 // Model describes one supported model.
@@ -74,6 +75,27 @@ var supported = map[string]Model{
 		CachedPerMillion: 0.18,
 		OutputPerMillion: 4,
 	},
+	"claude-opus-5-5": {
+		Provider:         ProviderAnthropic,
+		ContextWindow:    1000000,
+		InputPerMillion:  4,
+		CachedPerMillion: 0.20,
+		OutputPerMillion: 20,
+	},
+	"claude-sonnet-5-5": {
+		Provider:         ProviderAnthropic,
+		ContextWindow:    1000000,
+		InputPerMillion:  2,
+		CachedPerMillion: 0.20,
+		OutputPerMillion: 10,
+	},
+	"claude-haiku-4-5": {
+		Provider:         ProviderAnthropic,
+		ContextWindow:    200000,
+		InputPerMillion:  1,
+		CachedPerMillion: 0.10,
+		OutputPerMillion: 5,
+	},
 }
 
 // Names returns the whitelist in a stable order.
@@ -126,6 +148,11 @@ func Parse(name string) (provider, modelID string, err error) {
 		modelID = strings.TrimPrefix(name, "kimi/")
 	case ProviderDeepSeek:
 		modelID = strings.TrimPrefix(name, "deepseek/")
+	case ProviderAnthropic:
+		if strings.Contains(name, "/") {
+			return "", "", fmt.Errorf("unknown provider in %q", name)
+		}
+		modelID = name
 	default:
 		if strings.Contains(name, "/") {
 			return "", "", fmt.Errorf("unknown provider in %q", name)

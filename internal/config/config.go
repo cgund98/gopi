@@ -128,6 +128,7 @@ type Config struct {
 	OpenAIAPIKey       string
 	KimiAPIKey         string
 	DeepSeekAPIKey     string
+	AnthropicAPIKey    string
 	HomeDir            string
 	Secrets            map[string]string
 	SecretFiles        map[string]string
@@ -144,9 +145,10 @@ type Config struct {
 }
 
 type envSecrets struct {
-	OpenAIAPIKey   string `envconfig:"OPENAI_API_KEY"`
-	KimiAPIKey     string `envconfig:"KIMI_API_KEY"`
-	DeepSeekAPIKey string `envconfig:"DEEPSEEK_API_KEY"`
+	OpenAIAPIKey    string `envconfig:"OPENAI_API_KEY"`
+	KimiAPIKey      string `envconfig:"KIMI_API_KEY"`
+	DeepSeekAPIKey  string `envconfig:"DEEPSEEK_API_KEY"`
+	AnthropicAPIKey string `envconfig:"ANTHROPIC_API_KEY"`
 }
 
 // HomeDir returns the gopi configuration directory.
@@ -243,12 +245,16 @@ func Load(dir string) (Config, error) {
 	if broker[gopisecrets.DeepSeekAPIKey] != "" {
 		deepseekKey = broker[gopisecrets.DeepSeekAPIKey]
 	}
+	anthropicKey := secrets.AnthropicAPIKey
+	if broker[gopisecrets.AnthropicAPIKey] != "" {
+		anthropicKey = broker[gopisecrets.AnthropicAPIKey]
+	}
 	resolved, err := resolveModels(file)
 	if err != nil {
 		return Config{}, err
 	}
 	resolvedEfforts := resolveEfforts(file)
-	if err := requireKeys(resolved, apiKey, kimiKey, deepseekKey); err != nil {
+	if err := requireKeys(resolved, apiKey, kimiKey, deepseekKey, anthropicKey); err != nil {
 		return Config{}, err
 	}
 	endpoint := strings.TrimSpace(file.Search.Endpoint)
@@ -272,6 +278,7 @@ func Load(dir string) (Config, error) {
 		OpenAIAPIKey:       apiKey,
 		KimiAPIKey:         kimiKey,
 		DeepSeekAPIKey:     deepseekKey,
+		AnthropicAPIKey:    anthropicKey,
 		HomeDir:            dir,
 		Secrets:            broker,
 		SecretFiles:        secretFiles,
@@ -410,9 +417,9 @@ func pickModel(override, fallback string) (string, error) {
 	return name, nil
 }
 
-func requireKeys(resolved resolvedModels, openaiKey, kimiKey, deepseekKey string) error {
+func requireKeys(resolved resolvedModels, openaiKey, kimiKey, deepseekKey, anthropicKey string) error {
 	names := []string{resolved.fallback, resolved.agent, resolved.ask, resolved.plan, resolved.build}
-	var needOpenAI, needKimi, needDeepSeek bool
+	var needOpenAI, needKimi, needDeepSeek, needAnthropic bool
 	for _, name := range names {
 		if name == "" {
 			continue
@@ -428,6 +435,8 @@ func requireKeys(resolved resolvedModels, openaiKey, kimiKey, deepseekKey string
 			needKimi = true
 		case models.ProviderDeepSeek:
 			needDeepSeek = true
+		case models.ProviderAnthropic:
+			needAnthropic = true
 		}
 	}
 	if needOpenAI && openaiKey == "" {
@@ -438,6 +447,9 @@ func requireKeys(resolved resolvedModels, openaiKey, kimiKey, deepseekKey string
 	}
 	if needDeepSeek && deepseekKey == "" {
 		return fmt.Errorf("%s is required", gopisecrets.DeepSeekAPIKey)
+	}
+	if needAnthropic && anthropicKey == "" {
+		return fmt.Errorf("%s is required", gopisecrets.AnthropicAPIKey)
 	}
 	return nil
 }

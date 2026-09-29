@@ -8,7 +8,6 @@ import (
 
 	"github.com/cgund98/gogent"
 	"github.com/cgund98/gogent/inmemory"
-	"github.com/cgund98/gogent/openai"
 
 	"github.com/cgund98/gopi/internal/config"
 	"github.com/cgund98/gopi/internal/models"
@@ -33,7 +32,7 @@ const (
 // Session is one workspace chat wired to a gogent agent.
 type Session struct {
 	Agent     *gogent.Agent
-	Model     *openai.Model
+	Model     chatModel
 	Store     gogent.MessageStore
 	Registry  *gogent.ToolRegistry
 	Events    *gogent.ChannelBroadcaster
