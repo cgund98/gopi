@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1](https://github.com/cgund98/gopi/compare/v0.5.0...v0.5.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* allow .gopi/plans and .gitignore by default ([a0733d1](https://github.com/cgund98/gopi/commit/a0733d163f651f9d0a4a57168ae4d4cdc0deee94))
+* allow gitignore instead of blocking ([6a2fb5f](https://github.com/cgund98/gopi/commit/6a2fb5fe482c1a9ecb3a3dfde1d6130501f2f010))
+* document gopi-tools and egopi usage ([c5aaae8](https://github.com/cgund98/gopi/commit/c5aaae8acc169c9c0a0d6c7a1a872074515cb485))
+* document gopi-tools and egopi usage ([d2a3bc6](https://github.com/cgund98/gopi/commit/d2a3bc623f1aca08a3f9ca1e1ae2aacbb2125ffe))
+* upgrade gogent to 0.4.1 ([aa9d36f](https://github.com/cgund98/gopi/commit/aa9d36fb61d9ebdf78bc02fc351a83c4137be7c0))
+* upgrade gogent to 0.4.1 ([1a619cd](https://github.com/cgund98/gopi/commit/1a619cd1fbfe1b8ba319af01b7a08b93242fa5e0))
+
 ## [0.5.0](https://github.com/cgund98/gopi/compare/v0.4.0...v0.5.0) (2026-09-27)
 
 
