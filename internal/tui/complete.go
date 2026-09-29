@@ -20,7 +20,7 @@ func composerCommands() []completion {
 		{insert: "/mode", label: "/mode <name>", detail: "switch mode"},
 		{insert: "/model", label: "/model <name>", detail: "set the model for this mode"},
 		{insert: "/effort", label: "/effort <level>", detail: "set reasoning effort for this mode"},
-		{insert: "/allowpath", label: "/allowpath <path>", detail: "grant read access outside workspace"},
+		{insert: "/allowpath", label: "/allowpath <path>", detail: "open a path outside the workspace"},
 		{insert: "/compact", label: "/compact", detail: "summarize earlier turns"},
 		{insert: "/mouse", label: "/mouse [on|off]", detail: "toggle mouse capture"},
 		{insert: "/sessions", label: "/sessions", detail: "open saved chats"},

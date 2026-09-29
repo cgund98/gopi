@@ -17,12 +17,17 @@ const (
 // Profile is the host-computed sandbox for one command.
 // The child cannot widen it.
 type Profile struct {
-	Name         string
-	Home         string
-	ReadRoots    []string
-	WriteRoots   []string
-	DenyRead     []string
-	DenyWrite    []string
+	Name       string
+	Home       string
+	ReadRoots  []string
+	WriteRoots []string
+	DenyRead   []string
+	DenyWrite  []string
+	// OpenReads and OpenWrites are directories carved out of the deny set. They
+	// are allowed after every deny, with the denies that do not match them
+	// re-applied, so a .env inside an open directory stays protected.
+	OpenReads    []string
+	OpenWrites   []string
 	SessionReads []string
 	ExtraReads   []string
 	ExtraWrites  []string

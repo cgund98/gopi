@@ -42,7 +42,7 @@ That is the whole path from a model request to a constrained process.
 
 ```mermaid
 flowchart TD
-    Args["shell arguments<br/>command, cwd, profile,<br/>read_paths, write_paths, network"] --> Rules["policy.Build<br/>security floor + ignore files<br/>+ paths secrets.toml references"]
+    Args["shell arguments<br/>command, cwd, profile,<br/>read_paths, write_paths, network"] --> Rules["policy.BuildWith<br/>security floor + ~/.gopi/ignore<br/>+ paths secrets.toml references"]
     Rules --> Profile["sandbox.Profile<br/>roots, denies, grants,<br/>network mode, env, limits"]
     Profile --> Prep["private temp dir<br/>+ scrubbed environment"]
     Prep --> Launch{"sandbox.Launch"}
@@ -92,13 +92,16 @@ Then it denies, in this order:
 - Every pattern from the security floor and your ignore files: `.env` and friends,
   key and certificate files, `~/.gopi`, `~/.ssh`, `~/.aws`, `~/.kube`, `~/.gnupg`,
   the keychains, `.git/config`, `.git/hooks`, and the gopi binary itself.
-- Any ignore pattern from the repo's `.gitignore`, provided it can be translated.
+- Any pattern from `~/.gopi/ignore`, provided it can be translated.
+- Any pattern from the repo's `.gitignore` or `.git/info/exclude`, but only when
+  `respect_gitignore` is on.
 
 Seatbelt decides by the last matching rule, so the order matters. A session grant
 for a directory is allowed, then the floor rules it does not cover are applied
-again, so the grant cannot quietly open an `.env` inside it. Only a path you
-approved for one call is allowed after that, which is how a single approved `.env`
-stays readable while its neighbors do not.
+again, so the grant cannot quietly open an `.env` inside it. `<workspace>/.gopi/plans`
+is opened the same way, after every floor rule. Only a path you approved for one
+call is allowed after that, which is how a single approved `.env` stays readable
+while its neighbors do not.
 
 ```mermaid
 flowchart TD
@@ -108,7 +111,8 @@ flowchart TD
     Roots --> Grants["allow session and per-call grants"]
     Grants --> Floor["deny the security floor<br/>and ignore patterns"]
     Floor --> Again["re-apply the floor rules a<br/>directory grant does not cover"]
-    Again --> One["allow the one file you approved"]
+    Again --> Open["allow .gopi/plans, then re-apply<br/>the floor inside it"]
+    Open --> One["allow the one file you approved"]
 ```
 
 A command gets its own temp directory, not a shared `/tmp`. It cannot rendezvous
@@ -117,28 +121,55 @@ with an unsandboxed process through a temp file.
 ## Protected paths
 
 A protected path stays unreadable and unwritable until you approve that one call.
-The deny set is the union of three sources, and it feeds two places: the check
-inside the file tools, and the profile above.
+The deny set is the union of the security floor, your global ignore file, and —
+when you turn it on — the repository's ignore files. It feeds two places: the
+check inside the file tools, and the profile above.
 
 **The security floor** is compiled into gopi and cannot be turned off:
 
 | Group | Paths |
 |-------|-------|
-| gopi itself | `~/.gopi`, and every file `secrets.toml` references |
+| gopi itself | `~/.gopi`, `<workspace>/.gopi`, and every file `secrets.toml` references |
 | Credentials | `~/.ssh`, `~/.aws`, `~/.kube`, `~/.gnupg`, `~/Library/Keychains` |
 | Secret-looking files | `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa`, `id_ed25519`, `credentials.json`, `secrets.json` |
 
-**Your global ignore file** is `~/.gopi/ignore`, in gitignore syntax. **Repo rules**
-are `.gitignore` and `.git/info/exclude`. A repo may protect more files than the
-floor. It may never protect fewer:
+One directory is carved out of the floor. Plans are agent-authored markdown, not
+configuration and not a secret, so gopi treats them as ordinary workspace content:
+
+| Path | Read | Write |
+|------|------|-------|
+| `<workspace>/.gopi/plans` | Open | Open |
+| The rest of `<workspace>/.gopi` | Protected | Protected |
+| A nested `.gopi`, such as `scratch/demo/.gopi` | Protected | Protected |
+
+The waiver reaches no further than the `.gopi` rule it was carved from: a `.env`,
+a `*.pem`, or an `id_rsa` inside `.gopi/plans` is still protected. A nested `.gopi`
+belongs to some other project and stays shut.
+
+**Your global ignore file** is `~/.gopi/ignore`, in gitignore syntax, and it is
+always applied. **Repo rules** — `.gitignore` and `.git/info/exclude` — are applied
+only when `[sandbox] respect_gitignore` is `true`:
+
+```toml
+[sandbox]
+respect_gitignore = true
+```
+
+The default is off, because a `.gitignore` answers "what does git track?", not
+"what may the agent read?". A build output, a cache, or a scratch directory is
+usually listed there, and treating those as protected means an approval card on
+every visit. Turn the key on when the repository's ignore file also marks things
+you want the agent to keep away from.
+
+An opt-in repo may protect more files than the floor. It may never protect fewer:
 
 - **Negation cannot re-include a floor path.** A `.gitignore` line like `!.env`
   does not make `.env` readable; the floor wins.
 - **Some paths stay write-protected even in a writable workspace**:
   `.git/config`, `.git/hooks`, `.git/info/attributes`, `.gitignore`,
   `.git/info/exclude`, `.gopi`, and the gopi binary. A sandboxed command cannot
-  plant a `pre-commit` hook for later, or rewrite the ignore file that hides
-  `.env`.
+  plant a `pre-commit` hook for later or rewrite the ignore files. The one
+  exception is `<workspace>/.gopi/plans`, which is open for writing.
 
 Two details matter for matching:
 
@@ -217,8 +248,9 @@ warning-and-continue path, because that path is the bypass.
   Windows are not supported for `shell` today; `profile: unsandboxed` still runs
   after approval.
 - **An ignore pattern that cannot be translated** to a Seatbelt rule fails
-  `policy.Build`, so the command is refused rather than run with a hole in the
-  policy.
+  `policy.BuildWith`, so the command is refused rather than run with a hole in the
+  policy. This covers `~/.gopi/ignore`, and a repo ignore file when
+  `respect_gitignore` is on.
 - **`allowlist` without a proxy port** is an error, not a silent downgrade.
 - **An unknown network mode** is an error.
 

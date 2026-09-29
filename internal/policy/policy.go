@@ -26,8 +26,10 @@ var FloorGlobs = []string{
 type Rules struct {
 	DenyRead  []string
 	DenyWrite []string
-	read      []compiledRule
-	write     []compiledRule
+	// Open lists directories carved out of the deny set. See openPaths.
+	Open  []string
+	read  []compiledRule
+	write []compiledRule
 }
 
 type compiledRule struct {
@@ -35,12 +37,43 @@ type compiledRule struct {
 	re *regexp.Regexp
 }
 
-// Build unions the security floor, ~/.gopi/ignore, and repo gitignore files.
-// protected adds files that secrets.toml references, denied for reads and writes.
-// A pattern that cannot be translated fails closed.
+// Options configures BuildWith.
+type Options struct {
+	// Workspace is the trusted workspace root.
+	Workspace string
+	// GopiHome is the gopi configuration directory, which holds the ignore file.
+	GopiHome string
+	// Binary is the running gopi executable, which stays write-protected.
+	Binary string
+	// RespectGitignore adds the repository's .gitignore and .git/info/exclude to
+	// the deny set. It is off by default; see Build.
+	RespectGitignore bool
+	// Protected are files secrets.toml references, denied for reads and writes.
+	Protected []string
+}
+
+// Build unions the security floor, ~/.gopi/ignore, and the paths secrets.toml
+// references. protected adds files that secrets.toml references, denied for
+// reads and writes. A pattern that cannot be translated fails closed.
+//
+// Repository ignore files are left out. A .gitignore says what git tracks, not
+// what the agent may read, so a build output, a cache, or a scratch directory
+// listed there would otherwise need an approval on every visit. Use BuildWith
+// with RespectGitignore to add those rules back.
 func Build(workspace, gopiHome, binaryPath string, protected ...string) (Rules, error) {
+	return BuildWith(Options{
+		Workspace: workspace,
+		GopiHome:  gopiHome,
+		Binary:    binaryPath,
+		Protected: protected,
+	})
+}
+
+// BuildWith builds the deny set for one sandboxed command from opts.
+// A pattern that cannot be translated fails closed.
+func BuildWith(opts Options) (Rules, error) {
 	var rules Rules
-	for _, path := range protected {
+	for _, path := range opts.Protected {
 		if err := rules.add("secret "+path, "^"+foldLiteral(path)+"$", true, true); err != nil {
 			return Rules{}, err
 		}
@@ -60,17 +93,19 @@ func Build(workspace, gopiHome, binaryPath string, protected ...string) (Rules, 
 			return Rules{}, err
 		}
 	}
-	for _, path := range writeProtected(workspace, binaryPath) {
+	for _, path := range writeProtected(opts.Workspace, opts.Binary) {
 		pattern := "^" + foldLiteral(path) + "(/.*)?$"
 		if err := rules.add(path, pattern, false, true); err != nil {
 			return Rules{}, err
 		}
 	}
 
-	sources := []string{
-		filepath.Join(gopiHome, "ignore"),
-		filepath.Join(workspace, ".gitignore"),
-		filepath.Join(workspace, ".git", "info", "exclude"),
+	sources := []string{filepath.Join(opts.GopiHome, "ignore")}
+	if opts.RespectGitignore {
+		sources = append(sources,
+			filepath.Join(opts.Workspace, ".gitignore"),
+			filepath.Join(opts.Workspace, ".git", "info", "exclude"),
+		)
 	}
 	for _, source := range sources {
 		lines, err := readIgnore(source)
@@ -78,7 +113,7 @@ func Build(workspace, gopiHome, binaryPath string, protected ...string) (Rules, 
 			return Rules{}, err
 		}
 		for _, line := range lines {
-			pattern, skip, err := translateIgnoreLine(line, workspace)
+			pattern, skip, err := translateIgnoreLine(line, opts.Workspace)
 			if err != nil {
 				return Rules{}, fmt.Errorf("ignore %s: %w", source, err)
 			}
@@ -90,7 +125,22 @@ func Build(workspace, gopiHome, binaryPath string, protected ...string) (Rules, 
 			}
 		}
 	}
+	rules.Open = openPaths(opts.Workspace)
 	return rules, nil
+}
+
+// openPaths are the directories carved out of the deny set.
+//
+// A .gopi directory is gopi's own state, but the plans inside a workspace are
+// agent-authored markdown, not configuration or a secret. Treating them as
+// protected put an approval card in front of every read, so the workspace's own
+// .gopi/plans is read and written like any other workspace file. A nested .gopi
+// belongs to some other project and stays protected.
+func openPaths(workspace string) []string {
+	if workspace == "" {
+		return nil
+	}
+	return []string{filepath.Join(workspace, ".gopi", "plans")}
 }
 
 func trimmedIgnoreID(line string) string {
@@ -120,21 +170,55 @@ func (r *Rules) add(id, pattern string, read, write bool) error {
 
 // MatchRead reports the rule id when path is unreadable without approval.
 func (r Rules) MatchRead(path string) (string, bool) {
-	return matchRule(r.read, path)
+	return r.match(r.read, path)
 }
 
 // MatchWrite reports the rule id when path is unwritable without approval.
 func (r Rules) MatchWrite(path string) (string, bool) {
-	return matchRule(r.write, path)
+	return r.match(r.write, path)
 }
 
-func matchRule(rules []compiledRule, path string) (string, bool) {
-	for _, rule := range rules {
-		if rule.re.MatchString(path) {
-			return rule.id, true
+// Opens reports whether an open directory is dir itself or sits under it, so a
+// walker can descend into an otherwise denied directory to reach it.
+func (r Rules) Opens(dir string) bool {
+	for _, open := range r.Open {
+		if open == dir || strings.HasPrefix(open, dir+string(os.PathSeparator)) {
+			return true
 		}
 	}
+	return false
+}
+
+// match returns the first rule that denies path, skipping rules waived by an
+// open directory. Every match is considered, not just the first, so a waiver
+// cannot shadow a different protection: opening .gopi/plans lifts the .gopi
+// rule, but a .env or a *.pem inside those plans is still caught by its own.
+func (r Rules) match(rules []compiledRule, path string) (string, bool) {
+	for _, rule := range rules {
+		if !rule.re.MatchString(path) {
+			continue
+		}
+		if r.waived(rule, path) {
+			continue
+		}
+		return rule.id, true
+	}
 	return "", false
+}
+
+// waived reports whether an open directory lifts this rule for path. The path
+// must sit inside the open directory, and that directory must be caught by the
+// same rule, so the waiver reaches no further than the rule it was carved from.
+func (r Rules) waived(rule compiledRule, path string) bool {
+	for _, open := range r.Open {
+		if path != open && !strings.HasPrefix(path, open+string(os.PathSeparator)) {
+			continue
+		}
+		if rule.re.MatchString(open) {
+			return true
+		}
+	}
+	return false
 }
 
 func homeProtectedDirs() []string {

@@ -23,6 +23,7 @@ build = ""
 
 [sandbox]
 network = "deny"          # deny | allowlist
+respect_gitignore = false # true adds the repo's .gitignore to the deny set
 
 [sandbox.network]
 allow = ["github.com", "proxy.golang.org", "*.npmjs.org"]
@@ -47,6 +48,7 @@ endpoint = ""             # empty uses Brave Search
 | `[models]` | empty | Per-mode model override. Empty uses `model`. |
 | `[efforts]` | empty | Per-mode effort override. Empty uses `effort`. |
 | `[sandbox] network` | `deny` | `deny` or `allowlist`. See [Sandboxing](../concepts/sandboxing.md#network). |
+| `[sandbox] respect_gitignore` | `false` | Add the repo's `.gitignore` and `.git/info/exclude` to the deny set. See [Protected paths](../concepts/sandboxing.md#protected-paths). |
 | `[sandbox.network]` | empty | `allow` and `deny` host lists. A `deny` entry beats an `allow` entry. A `*` matches one DNS label. |
 | `[instructions] project_doc_max_bytes` | `32768` | Cap on each instruction section. |
 | `[instructions] fallback_files` | empty | Extra instruction filenames beside `AGENTS.md`. |

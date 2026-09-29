@@ -41,6 +41,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Network != "deny" {
 		t.Fatalf("network = %q", cfg.Network)
 	}
+	if cfg.RespectGitignore {
+		t.Fatal("respect_gitignore should default to false")
+	}
 	if cfg.SearchEndpoint != "https://api.search.brave.com/res/v1/web/search" {
 		t.Fatalf("search endpoint = %q", cfg.SearchEndpoint)
 	}
@@ -100,6 +103,36 @@ deny = ["evil.example"]
 	}
 	if _, err := Load(dir); err == nil {
 		t.Fatal("expected unrestricted config to fail")
+	}
+}
+
+func TestLoadRespectGitignore(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`
+[sandbox]
+network = "allowlist"
+respect_gitignore = true
+
+[sandbox.network]
+allow = ["github.com"]
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.RespectGitignore {
+		t.Fatal("respect_gitignore = true was not read")
+	}
+	if cfg.Network != "allowlist" || len(cfg.AllowHosts) != 1 {
+		t.Fatalf("cfg = %#v", cfg)
 	}
 }
 

@@ -165,6 +165,60 @@ func TestSeatbeltSessionFileGrantFollowsFloor(t *testing.T) {
 	}
 }
 
+func TestSeatbeltOpenDirKeepsFloorInside(t *testing.T) {
+	open := "/Users/me/work/.gopi/plans"
+	// writeRegex escapes backslashes, so the rendered pattern doubles them.
+	envRule := `^(.*/)?\.[eE][nN][vV](/.*)?$`
+	rendered := strings.ReplaceAll(envRule, `\`, `\\`)
+	body, err := SeatbeltProfile(Profile{
+		ReadRoots:  []string{"/Users/me/work"},
+		WriteRoots: []string{"/Users/me/work"},
+		DenyRead:   []string{envRule},
+		DenyWrite:  []string{envRule},
+		OpenReads:  []string{open},
+		OpenWrites: []string{open},
+		Network:    NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDeny := strings.Index(body, `(deny file-read* (regex "`+rendered+`"))`)
+	readOpen := strings.Index(body, `(allow file-read* (subpath "`+open+`"))`)
+	writeOpen := strings.Index(body, `(allow file-write* (subpath "`+open+`"))`)
+	if readDeny < 0 || readOpen < 0 || writeOpen < 0 || readDeny >= readOpen || readDeny >= writeOpen {
+		t.Fatalf("open directory must be allowed after the deny:\n%s", body)
+	}
+	// The floor is re-applied inside the open directory, so a .env under it stays
+	// shut even though the directory itself is open.
+	reappliedRead := strings.LastIndex(body, `(deny file-read* (regex "`+rendered+`"))`)
+	reappliedWrite := strings.LastIndex(body, `(deny file-write* (regex "`+rendered+`"))`)
+	if reappliedRead <= readOpen || reappliedWrite <= writeOpen {
+		t.Fatalf("the floor must be re-applied inside the open directory:\n%s", body)
+	}
+}
+
+func TestSeatbeltApprovedFileBeatsOpenDir(t *testing.T) {
+	open := "/Users/me/work/.gopi/plans"
+	env := open + "/.env"
+	envRule := `^(.*/)?\.[eE][nN][vV](/.*)?$`
+	rendered := strings.ReplaceAll(envRule, `\`, `\\`)
+	body, err := SeatbeltProfile(Profile{
+		ReadRoots:  []string{"/Users/me/work"},
+		DenyRead:   []string{envRule},
+		OpenReads:  []string{open},
+		ExtraReads: []string{env},
+		Network:    NetworkDeny,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reapplied := strings.LastIndex(body, `(deny file-read* (regex "`+rendered+`"))`)
+	approved := strings.LastIndex(body, `(allow file-read* (subpath "`+env+`"))`)
+	if approved < 0 || approved <= reapplied {
+		t.Fatalf("one approved .env must stay readable inside an open directory:\n%s", body)
+	}
+}
+
 func TestLaunchEcho(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS")

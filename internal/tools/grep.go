@@ -97,7 +97,7 @@ func (t *Grep) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage,
 				if entry.Name() == ".git" {
 					return filepath.SkipDir
 				}
-				if rule, ok := t.Rules.MatchRead(path); ok && !grantOpens(path, t.Rules, opened) {
+				if rule, ok := t.Rules.MatchRead(path); ok && !grantOpens(path, t.Rules, opened) && !t.Rules.Opens(path) {
 					appendDenied(&denied, t.Root.Path, path, rule)
 					return filepath.SkipDir
 				}

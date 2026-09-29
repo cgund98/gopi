@@ -12,7 +12,7 @@ Type these at the composer. `/help` prints the same list in the chat.
 | `/model` | List the supported models. |
 | `/effort <level>` | Set reasoning effort: `none`, `low`, `medium`, `high`. |
 | `/effort` | List the effort levels. |
-| `/allowpath <path>` | Grant read access outside the workspace for the rest of this chat. |
+| `/allowpath <path>` | Open a path outside the workspace for the rest of this chat. A leading `~` expands to your home directory. |
 | `/compact` | Summarize earlier turns. |
 | `/mouse [on\|off]` | Toggle mouse capture. |
 | `/sessions` | Open the saved-chat list. |
