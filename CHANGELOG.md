@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/cgund98/gopi/compare/v0.6.0...v0.7.0) (2026-10-02)
+
+
+### Features
+
+* support explore mode for delegate ([5842ffb](https://github.com/cgund98/gopi/commit/5842ffb0cefa2bbac9e1e4eb987c0ee9945991c5))
+
+
+### Bug Fixes
+
+* add mutex for concurrent tools ([784b1ba](https://github.com/cgund98/gopi/commit/784b1ba5c2f858e63da61e23e080e16ea09ff787))
+* approval scrolling, prompt wrapping ([fe7f81e](https://github.com/cgund98/gopi/commit/fe7f81edc34dc5d7033e3312959b03421f266f90))
+* throw error on invalid slash command ([398b4ec](https://github.com/cgund98/gopi/commit/398b4ec69607d57ced3334231f899bd23ad3b720))
+
 ## [0.6.0](https://github.com/cgund98/gopi/compare/v0.5.1...v0.6.0) (2026-09-29)
 
 
