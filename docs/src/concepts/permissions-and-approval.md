@@ -77,7 +77,24 @@ written by the model. A model that has been prompt-injected can ask for an
 elevated command, but it cannot dress the request up: you see the argv you would
 type yourself.
 
-Keys: `↑`/`↓` and Enter, or `y` to approve and `n` to reject.
+A call that is waiting on approval renders in the card's attention colour, so it
+stands out from the calls that already ran. Once you answer it, the card takes on
+the colour of its outcome.
+
+Keys: `↑`/`↓` and Enter, or `y` to approve and `n` to reject. `y`, `n`, and
+Enter always answer the card, whichever pane has focus.
+
+The call itself is shown once, as its highlighted card in the transcript just
+above. The approval block repeats only what that card does not: why the call
+paused, and the paths, hosts, or profile change it is asking for. A long reason
+is capped to the space left after a few rows of chat, with the hidden rows counted
+as `… N more lines`.
+
+Press `tab` to move focus between the choices and the chat history, then scroll
+the history with the same keys as the normal view: `↑`/`↓`, `pgup`/`pgdown`,
+`home`/`end`, `shift+↑`/`shift+↓`, or the mouse wheel. Press `tab` again to
+return to the choices. The command, its arguments, and any edit diff are in the
+transcript, so scrolling reads the whole call.
 
 If several calls are pending, they are queued, and you answer them one at a time.
 Rejecting appends a rejection result the model can see, so it can try something

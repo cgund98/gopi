@@ -279,10 +279,15 @@ func outputFrameMetrics(width int) (inner, textWidth int) {
 	return inner, textWidth
 }
 
+// renderApprovalBody is the approval view of the tool body. It carries only what
+// the inline transcript card does not draw, so nothing is shown twice: an edit
+// diff and a custom headline are already in the transcript, while the paths or
+// hosts a call wants opened, and an unknown tool's arguments, are not.
 func renderApprovalBody(card toolCardView, width int) string {
 	switch card.ToolName {
 	case "edit_file":
-		return renderToolBody(card, width)
+		// The transcript renders this card's diff.
+		return ""
 	case "read_file", "grep", "find", "shell":
 		return renderPathGrants(card.Args, width)
 	default:

@@ -138,6 +138,8 @@ func renderToolLine(name string, state toolCardState, selected bool, width int) 
 	switch {
 	case selected:
 		style = toolSelectedStyle
+	case state == toolCardPending:
+		style = toolPendingStyle
 	case state == toolCardCompleted:
 		style = toolSuccessStyle
 	case state == toolCardRejected || state == toolCardFailed:

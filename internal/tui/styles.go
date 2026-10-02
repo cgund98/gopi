@@ -16,6 +16,10 @@ var (
 	toolSelectedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("86")).
 				Bold(true)
+	// toolPendingStyle marks a tool card that is waiting on approval. The
+	// selected card is the same blue in bold, so a single pending approval keeps
+	// the look the approval prompt used to draw.
+	toolPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
 	toolDimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	toolSuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("108"))
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
