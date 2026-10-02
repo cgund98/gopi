@@ -89,12 +89,44 @@ func TestContextPercentUsesTranscript(t *testing.T) {
 
 func TestSubagentLabel(t *testing.T) {
 	now := time.Now()
-	status := tools.DelegateStatus{Started: now.Add(-42 * time.Second), ToolCalls: 3, Last: "grep resume"}
+	status := tools.SubagentStatus{Started: now.Add(-42 * time.Second), ToolCalls: 3, Last: "grep resume"}
 	if got := subagentLabel(status, now); got != "Subagent 42s · 3 tool calls · grep resume" {
 		t.Fatalf("label = %q", got)
 	}
-	if got := subagentLabel(tools.DelegateStatus{Started: now}, now); got != "Subagent 0s · starting" {
+	if got := subagentLabel(tools.SubagentStatus{Started: now}, now); got != "Subagent 0s · starting" {
 		t.Fatalf("starting label = %q", got)
+	}
+	explore := tools.SubagentStatus{Kind: "explore", Started: now.Add(-12 * time.Second), ToolCalls: 5, Searches: 5, Last: "grep Resume"}
+	if got := subagentLabel(explore, now); got != "Explore 12s · 5 searches · grep Resume" {
+		t.Fatalf("explore label = %q", got)
+	}
+	// An explore child that has only read a file so far falls back to the plain
+	// tool-call count rather than claiming zero searches.
+	reading := tools.SubagentStatus{Kind: "explore", Started: now, ToolCalls: 1, Last: "read main.go"}
+	if got := subagentLabel(reading, now); got != "Explore 0s · 1 tool call · read main.go" {
+		t.Fatalf("explore read label = %q", got)
+	}
+}
+
+func TestExploreCardIsDistinct(t *testing.T) {
+	card := toolCardView{ToolName: "explore", Args: json.RawMessage(`{"task":"find the parser","thoroughness":"quick"}`)}
+	if got := toolHeadline(card); got != "explore find the parser" {
+		t.Fatalf("headline = %q", got)
+	}
+	// The frame is drawn for explore, so its raw JSON must not double up.
+	if hideToolResult(toolCardView{ToolName: "explore", Result: `{"answer":"x"}`}) {
+		t.Fatal("explore's friendly frame should be visible")
+	}
+	body := stripANSI(renderFriendlyResult(card, `{"kind":"explore","answer":"the parser lives in parser.go","tool_calls":3,"denied":[]}`, 60))
+	if !strings.Contains(body, "Explore subagent") || !strings.Contains(body, "the parser lives in parser.go") {
+		t.Fatalf("explore frame = %q", body)
+	}
+	// The explore card line uses its own color, not the completed-tool green.
+	if exploreStyle.GetForeground() == toolSuccessStyle.GetForeground() {
+		t.Fatal("exploreStyle should differ from the completed-tool color")
+	}
+	if got := stripANSI(renderToolLineFor("explore", "explore find it", toolCardCompleted, false, 60)); !strings.Contains(got, "> explore find it") {
+		t.Fatalf("explore card line = %q", got)
 	}
 }
 

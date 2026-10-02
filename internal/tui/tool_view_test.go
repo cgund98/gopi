@@ -134,8 +134,11 @@ func TestApprovalPromptUsesCustomRenderer(t *testing.T) {
 		approval: toolview.View{Fields: []toolview.Field{{Label: "Summary", Value: "Standup"}}},
 	}}
 	view := stripANSI(renderApprovalPrompt(pending, renderer, 60))
-	if !strings.Contains(view, "calendar create Standup") || !strings.Contains(view, "Summary  Standup") || strings.Contains(view, `"operation"`) {
+	if !strings.Contains(view, "Summary  Standup") || strings.Contains(view, `"operation"`) {
 		t.Fatalf("prompt = %q", view)
+	}
+	if strings.Contains(view, "calendar create Standup") {
+		t.Fatalf("prompt repeated the renderer headline: %q", view)
 	}
 
 	fallback := stripANSI(renderApprovalPrompt(pending, safeRenderer{inner: fakeRenderer{}}, 60))

@@ -266,7 +266,7 @@ func (m *chatModel) renderSessions() string {
 			b.WriteByte('\n')
 		}
 		if index == 0 {
-			b.WriteString(sessionLine(m.sessionCursor == 0, "New session", m.sessionsHome))
+			b.WriteString(sessionLine(m.sessionCursor == 0, "New session", m.sessionsHome, m.width))
 			continue
 		}
 		file := m.sessionRows[index-1]
@@ -275,7 +275,7 @@ func (m *chatModel) renderSessions() string {
 			title = "Untitled"
 		}
 		when := file.Updated.Local().Format("2006-01-02 15:04")
-		b.WriteString(sessionLine(m.sessionCursor == index, title+"  "+when, file.Workspace))
+		b.WriteString(sessionLine(m.sessionCursor == index, title+"  "+when, file.Workspace, m.width))
 	}
 	if m.sessionErr != "" {
 		b.WriteString("\n\n")
@@ -287,7 +287,7 @@ func (m *chatModel) renderSessions() string {
 		if title == "" {
 			title = "Untitled"
 		}
-		b.WriteString(helpStyle.Render("x delete " + title + " · esc cancel"))
+		b.WriteString(helpStyle.Render(truncateWidth("x delete "+title+" · esc cancel", m.width)))
 	} else {
 		b.WriteString(helpStyle.Render("enter open · x delete · esc back"))
 	}
@@ -342,7 +342,16 @@ func fitListOffset(offset, cursor, count, visible int) int {
 	return offset
 }
 
-func sessionLine(selected bool, title, detail string) string {
+// sessionLine draws one saved-chat row. It truncates the title and the detail so
+// a long title or workspace path stays on one line.
+func sessionLine(selected bool, title, detail string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	title = truncateWidth(title, width)
+	if detail != "" {
+		detail = truncateWidth(detail, max(1, width-2))
+	}
 	if selected {
 		title = agentModeStyle.Render(title)
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/joho/godotenv"
@@ -23,6 +24,15 @@ const (
 	defaultMaxIter   = 50
 	homeDirEnv       = "GOPI_HOME"
 	requiredDirMode  = os.FileMode(0o700)
+
+	// engineAuto, engineRipgrep, and engineBuiltin are the search.engine values.
+	engineAuto    = "auto"
+	engineRipgrep = "ripgrep"
+	engineBuiltin = "builtin"
+
+	defaultExploreMaxCalls       = 6
+	defaultExploreIterations     = 40
+	defaultExploreTimeoutSeconds = 120
 )
 
 // File is the on-disk ~/.gopi/config.toml shape.
@@ -37,14 +47,16 @@ type File struct {
 	Sandbox       SandboxFile      `toml:"sandbox"`
 	Instructions  InstructionsFile `toml:"instructions"`
 	Search        SearchFile       `toml:"search"`
+	Subagents     SubagentsFile    `toml:"subagents"`
 }
 
 // ModelsFile is the optional [models] table. Empty keys fall back to model.
 type ModelsFile struct {
-	Agent string `toml:"agent"`
-	Ask   string `toml:"ask"`
-	Plan  string `toml:"plan"`
-	Build string `toml:"build"`
+	Agent   string `toml:"agent"`
+	Ask     string `toml:"ask"`
+	Plan    string `toml:"plan"`
+	Build   string `toml:"build"`
+	Explore string `toml:"explore"`
 }
 
 // EffortsFile is the optional [effort] table. Empty keys fall back to effort.
@@ -79,6 +91,17 @@ type HostsFile struct {
 // SearchFile is the [search] table.
 type SearchFile struct {
 	Endpoint string `toml:"endpoint"`
+	// Engine selects the grep backend: auto, ripgrep, or builtin.
+	Engine string `toml:"engine"`
+	// RipgrepPath is the ripgrep binary. Empty looks for rg on PATH.
+	RipgrepPath string `toml:"ripgrep_path"`
+}
+
+// SubagentsFile is the [subagents] table. Zero means the built-in default.
+type SubagentsFile struct {
+	ExploreMaxCalls       int `toml:"explore_max_calls"`
+	ExploreIterations     int `toml:"explore_iterations"`
+	ExploreTimeoutSeconds int `toml:"explore_timeout_seconds"`
 }
 
 // Custom holds the top-level tables in ~/.gopi/config.toml that gopi does not
@@ -118,6 +141,7 @@ type Config struct {
 	AskModel           string
 	PlanModel          string
 	BuildModel         string
+	ExploreModel       string
 	Effort             string
 	AgentEffort        string
 	AskEffort          string
@@ -141,7 +165,13 @@ type Config struct {
 	FallbackFiles      []string
 	SkillDirs          []string
 	SearchEndpoint     string
-	Custom             Custom
+	SearchEngine       string
+	RipgrepPath        string
+	ExploreMaxCalls    int
+	ExploreIterations  int
+	// ExploreTimeout is the explore subagent's wall-clock cap.
+	ExploreTimeout time.Duration
+	Custom         Custom
 }
 
 type envSecrets struct {
@@ -215,6 +245,23 @@ func Load(dir string) (Config, error) {
 	if file.Instructions.ProjectDocMaxBytes <= 0 {
 		file.Instructions.ProjectDocMaxBytes = 32768
 	}
+	if file.Search.Engine == "" {
+		file.Search.Engine = engineAuto
+	}
+	switch file.Search.Engine {
+	case engineAuto, engineRipgrep, engineBuiltin:
+	default:
+		return Config{}, fmt.Errorf("search.engine %q is not one of %q, %q, %q", file.Search.Engine, engineAuto, engineRipgrep, engineBuiltin)
+	}
+	if file.Subagents.ExploreMaxCalls <= 0 {
+		file.Subagents.ExploreMaxCalls = defaultExploreMaxCalls
+	}
+	if file.Subagents.ExploreIterations <= 0 {
+		file.Subagents.ExploreIterations = defaultExploreIterations
+	}
+	if file.Subagents.ExploreTimeoutSeconds <= 0 {
+		file.Subagents.ExploreTimeoutSeconds = defaultExploreTimeoutSeconds
+	}
 
 	var userPrompt string
 	systemPath := filepath.Join(dir, systemPromptFile)
@@ -268,6 +315,7 @@ func Load(dir string) (Config, error) {
 		AskModel:           resolved.ask,
 		PlanModel:          resolved.plan,
 		BuildModel:         resolved.build,
+		ExploreModel:       resolved.explore,
 		Effort:             resolvedEfforts.fallback,
 		AgentEffort:        resolvedEfforts.agent,
 		AskEffort:          resolvedEfforts.ask,
@@ -291,6 +339,11 @@ func Load(dir string) (Config, error) {
 		FallbackFiles:      file.Instructions.FallbackFiles,
 		SkillDirs:          file.Instructions.SkillDirs,
 		SearchEndpoint:     endpoint,
+		SearchEngine:       file.Search.Engine,
+		RipgrepPath:        strings.TrimSpace(file.Search.RipgrepPath),
+		ExploreMaxCalls:    file.Subagents.ExploreMaxCalls,
+		ExploreIterations:  file.Subagents.ExploreIterations,
+		ExploreTimeout:     time.Duration(file.Subagents.ExploreTimeoutSeconds) * time.Second,
 		Custom:             custom,
 	}, nil
 }
@@ -374,6 +427,7 @@ type resolvedModels struct {
 	ask      string
 	plan     string
 	build    string
+	explore  string
 }
 
 func resolveModels(file File) (resolvedModels, error) {
@@ -403,7 +457,16 @@ func resolveModels(file File) (resolvedModels, error) {
 			return resolvedModels{}, err
 		}
 	}
-	return resolvedModels{fallback: fallback, agent: agent, ask: ask, plan: plan, build: build}, nil
+	// explore defaults to empty: an unset models.explore means the subagent
+	// borrows the active mode's model, which is what the app resolves.
+	explore := ""
+	if strings.TrimSpace(file.Models.Explore) != "" {
+		explore, err = pickModel(file.Models.Explore, fallback)
+		if err != nil {
+			return resolvedModels{}, err
+		}
+	}
+	return resolvedModels{fallback: fallback, agent: agent, ask: ask, plan: plan, build: build, explore: explore}, nil
 }
 
 func pickModel(override, fallback string) (string, error) {
@@ -454,7 +517,7 @@ func requireKeys(resolved resolvedModels, openaiKey, kimiKey, deepseekKey, anthr
 	return nil
 }
 
-// ModelFor returns the resolved model for agent, ask, or plan.
+// ModelFor returns the resolved model for agent, ask, plan, or explore.
 func (c Config) ModelFor(mode string) string {
 	var override string
 	switch mode {
@@ -464,6 +527,8 @@ func (c Config) ModelFor(mode string) string {
 		override = c.AskModel
 	case "plan":
 		override = c.PlanModel
+	case "explore":
+		override = c.ExploreModel
 	}
 	if override != "" {
 		return override

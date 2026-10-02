@@ -14,6 +14,7 @@ agent = "gpt-5.6-sol"     # empty uses model
 ask = ""
 plan = ""
 build = ""                # empty uses the agent model; the b key on a plan uses this
+explore = ""              # empty uses the active mode's model
 
 [efforts]
 agent = ""                # empty uses effort
@@ -36,6 +37,13 @@ skill_dirs = []           # each entry is a directory of <name>/SKILL.md
 
 [search]
 endpoint = ""             # empty uses Brave Search
+engine = "auto"           # auto | ripgrep | builtin
+ripgrep_path = ""         # empty looks for rg on PATH
+
+[subagents]
+explore_max_calls = 6     # explore calls allowed per session
+explore_iterations = 40   # model turns per explore subagent
+explore_timeout_seconds = 120
 ```
 
 ## Keys
@@ -45,7 +53,7 @@ endpoint = ""             # empty uses Brave Search
 | `model` | `deepseek/deepseek-flash` | Default model name. See [Models](models.md). |
 | `max_iterations` | `50` | Cap on model turns per task. |
 | `effort` | `none` | Reasoning effort: `none`, `low`, `medium`, `high`. |
-| `[models]` | empty | Per-mode model override. Empty uses `model`. |
+| `[models]` | empty | Per-mode model override, including `explore`. Empty uses `model`. |
 | `[efforts]` | empty | Per-mode effort override. Empty uses `effort`. |
 | `[sandbox] network` | `deny` | `deny` or `allowlist`. See [Sandboxing](../concepts/sandboxing.md#network). |
 | `[sandbox] respect_gitignore` | `false` | Add the repo's `.gitignore` and `.git/info/exclude` to the deny set. See [Protected paths](../concepts/sandboxing.md#protected-paths). |
@@ -54,6 +62,20 @@ endpoint = ""             # empty uses Brave Search
 | `[instructions] fallback_files` | empty | Extra instruction filenames beside `AGENTS.md`. |
 | `[instructions] skill_dirs` | empty | Directories of `<name>/SKILL.md`. |
 | `[search] endpoint` | empty | Search endpoint. Empty uses Brave Search. |
+| `[search] engine` | `auto` | `grep` backend: `auto`, `ripgrep`, or `builtin`. See [Tools](tools.md#grep). |
+| `[search] ripgrep_path` | empty | ripgrep binary. Empty looks for `rg` on `PATH`. |
+| `[subagents] explore_max_calls` | `6` | `explore` calls allowed per session. |
+| `[subagents] explore_iterations` | `40` | Model turns allowed per `explore` subagent. |
+| `[subagents] explore_timeout_seconds` | `120` | Wall-clock cap on one `explore` subagent. |
+
+`[search] ripgrep_path` that does not resolve is an error only when
+`engine = "ripgrep"`, which asks for that binary by name. Under `auto`, a missing
+or broken `rg` is not fatal: `grep` falls back to the built-in walker and reports
+`backend: builtin` in its result. An unknown `engine` value fails at startup, the
+way an unknown model name does.
+
+An empty `[models] explore` means the explore subagent uses whatever model the
+active mode is using, so by default it costs the same per token as the parent.
 
 `web_search` calls `https://api.search.brave.com/res/v1/web/search` unless
 `endpoint` is set. Put `search_api_key` in `~/.gopi/secrets.toml`. `web_fetch`

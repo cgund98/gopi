@@ -41,6 +41,11 @@ func toolHeadline(card toolCardView) string {
 			return "delegate " + task
 		}
 		return "delegate"
+	case "explore":
+		if task := stringArg(card.Args, "task"); task != "" {
+			return "explore " + task
+		}
+		return "explore"
 	case "write_plan":
 		if path := stringArg(card.Args, "path"); path != "" {
 			return "plan " + path
@@ -146,7 +151,18 @@ func renderFriendlyResult(card toolCardView, content string, width int) string {
 		if err := json.Unmarshal([]byte(content), &payload); err != nil {
 			return ""
 		}
-		return renderDelegateOutput(payload.Answer, payload.Denied, payload.ToolCalls, width)
+		return renderSubagentOutput(payload.Answer, payload.Denied, payload.ToolCalls, "", width)
+	case "explore":
+		var payload struct {
+			Answer    string   `json:"answer"`
+			ToolCalls int      `json:"tool_calls"`
+			Denied    []string `json:"denied"`
+			Backend   string   `json:"backend"`
+		}
+		if err := json.Unmarshal([]byte(content), &payload); err != nil {
+			return ""
+		}
+		return renderSubagentOutput(payload.Answer, payload.Denied, payload.ToolCalls, "Explore subagent", width)
 	case "write_plan":
 		return renderPlanResult(card, content, width)
 	default:
@@ -188,9 +204,15 @@ func renderShellOutput(stdout, stderr string, exitCode int, truncated bool, widt
 	return renderOutputFrame(lines, width)
 }
 
-func renderDelegateOutput(answer string, denied []string, toolCalls int, width int) string {
+// renderSubagentOutput draws a child agent's answer in the output frame. A blank
+// title draws the frame with no heading, which is what delegate uses.
+func renderSubagentOutput(answer string, denied []string, toolCalls int, title string, width int) string {
 	_, textWidth := outputFrameMetrics(width)
 	var lines []string
+	if title != "" {
+		lines = append(lines, exploreStyle.Render(title))
+		lines = append(lines, "")
+	}
 	if text := strings.TrimSpace(answer); text != "" {
 		lines = append(lines, strings.Split(wrapText(text, textWidth+2), "\n")...)
 	}
@@ -279,10 +301,15 @@ func outputFrameMetrics(width int) (inner, textWidth int) {
 	return inner, textWidth
 }
 
+// renderApprovalBody is the approval view of the tool body. It carries only what
+// the inline transcript card does not draw, so nothing is shown twice: an edit
+// diff and a custom headline are already in the transcript, while the paths or
+// hosts a call wants opened, and an unknown tool's arguments, are not.
 func renderApprovalBody(card toolCardView, width int) string {
 	switch card.ToolName {
 	case "edit_file":
-		return renderToolBody(card, width)
+		// The transcript renders this card's diff.
+		return ""
 	case "read_file", "grep", "find", "shell":
 		return renderPathGrants(card.Args, width)
 	default:

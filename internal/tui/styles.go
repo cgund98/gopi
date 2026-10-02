@@ -16,6 +16,10 @@ var (
 	toolSelectedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("86")).
 				Bold(true)
+	// toolPendingStyle marks a tool card that is waiting on approval. The
+	// selected card is the same blue in bold, so a single pending approval keeps
+	// the look the approval prompt used to draw.
+	toolPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
 	toolDimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	toolSuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("108"))
 	toolErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
@@ -35,6 +39,9 @@ var (
 	agentModeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	askModeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true)
 	planModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+
+	// exploreStyle marks the explore subagent, distinct from every mode color.
+	exploreStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
 
 	promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
 

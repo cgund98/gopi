@@ -44,8 +44,8 @@ type Session struct {
 	Tasks     *tools.TaskList
 	Grants    *tools.ReadGrants
 	Mode      Mode
-	// Subagent reports a running delegate call.
-	Subagent *tools.DelegateProgress
+	// Subagent reports a running delegate or explore call.
+	Subagent *tools.SubagentProgress
 	// Renderers holds custom tools that implement toolview.Renderer, by name, across all modes.
 	Renderers map[string]toolview.Renderer
 	// Redact removes secret values from text shown in the UI.
@@ -84,9 +84,18 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 	for _, dir := range prompt.SkillRoots(promptOptions(cfg, root.Path, workspaceTrust)) {
 		grants.Add(dir)
 	}
+	// Resolve the search engine once, so no tool call does a lookup on PATH.
+	rgPath, err := tools.LookupRG(cfg.RipgrepPath)
+	if err != nil {
+		if _, resolveErr := tools.ResolveEngine(cfg.SearchEngine, ""); resolveErr != nil {
+			return nil, err
+		}
+		rgPath = ""
+	}
+	searchFields := tools.SearchEngine{RGPath: rgPath, HomeDir: cfg.HomeDir, SecretFiles: secretFiles, RespectGitignore: cfg.RespectGitignore}
 	read := []gogent.Tool{
 		&tools.ReadFile{Root: root, Rules: rules, Grants: grants},
-		&tools.Grep{Root: root, Rules: rules, Grants: grants},
+		&tools.Grep{Root: root, Rules: rules, Grants: grants, Engine: cfg.SearchEngine, RGPath: searchFields.RGPath, HomeDir: searchFields.HomeDir, SecretFiles: searchFields.SecretFiles, RespectGitignore: searchFields.RespectGitignore},
 		&tools.Find{Root: root, Rules: rules, Grants: grants},
 		&tools.GrantRead{Root: root, Grants: grants},
 	}
@@ -110,7 +119,7 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		Tasks:      taskList,
 		Grants:     grants,
 		Mode:       ModeAgent,
-		Subagent:   &tools.DelegateProgress{},
+		Subagent:   &tools.SubagentProgress{},
 		Renderers:  collectRenderers(extra),
 		Redact:     redact,
 		registries: map[Mode]*gogent.ToolRegistry{},
@@ -129,16 +138,40 @@ func New(cfg config.Config, root workspace.Root, workspaceTrust trust.Workspace,
 		DenyHosts:        cfg.DenyHosts,
 		SecretFiles:      secretFiles,
 		RespectGitignore: cfg.RespectGitignore,
+		Engine:           cfg.SearchEngine,
+		RGPath:           rgPath,
+		SearchHome:       cfg.HomeDir,
+		BasePrompt:       func() string { return session.basePrompt },
 		Redact:           redact,
 		Grants:           grants,
 		Progress:         session.Subagent,
-		NewModel: func(registry *gogent.ToolRegistry) (gogent.Model, error) {
-			return session.models.New(session.active, registry, session.basePrompt, session.effortFor(session.Mode))
+		NewModel: func(registry *gogent.ToolRegistry, systemPrompt string) (gogent.Model, error) {
+			return session.models.New(session.active, registry, systemPrompt, session.effortFor(session.Mode))
 		},
 	}
-	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, search, fetch, tasks, &tools.UpdatePlan{Inner: plan})
-	askTools := append(append([]gogent.Tool{}, read...), search, fetch)
-	planTools := append(append([]gogent.Tool{}, read...), shell, plan, search, fetch)
+	explore := &tools.Explore{
+		Root:             root,
+		Rules:            rules,
+		HomeDir:          cfg.HomeDir,
+		SecretFiles:      secretFiles,
+		RespectGitignore: cfg.RespectGitignore,
+		Engine:           cfg.SearchEngine,
+		RGPath:           rgPath,
+		SearchHome:       cfg.HomeDir,
+		Redact:           redact,
+		Grants:           grants,
+		Prompt:           func() (string, error) { return prompt.ExplorePrompt(cfg.HomeDir) },
+		Progress:         session.Subagent,
+		MaxIterations:    cfg.ExploreIterations,
+		Timeout:          cfg.ExploreTimeout,
+		MaxCalls:         cfg.ExploreMaxCalls,
+		NewModel: func(registry *gogent.ToolRegistry, systemPrompt string) (gogent.Model, error) {
+			return session.models.New(session.exploreModel(), registry, systemPrompt, session.effortFor(session.Mode))
+		},
+	}
+	agentTools := append(append([]gogent.Tool{}, read...), shell, edit, delegate, explore, search, fetch, tasks, &tools.UpdatePlan{Inner: plan})
+	askTools := append(append([]gogent.Tool{}, read...), explore, search, fetch)
+	planTools := append(append([]gogent.Tool{}, read...), shell, plan, explore, search, fetch)
 	agentTools = append(agentTools, extra[ModeAgent]...)
 	askTools = append(askTools, extra[ModeAsk]...)
 	planTools = append(planTools, extra[ModePlan]...)
@@ -190,6 +223,15 @@ func registerTools(list []gogent.Tool, redact func(string) string) (*gogent.Tool
 		}
 	}
 	return registry, nil
+}
+
+// exploreModel is the model the explore subagent uses. An unset models.explore
+// falls back to the model of the active mode, as OpenCode does.
+func (s *Session) exploreModel() string {
+	if s.Config.ExploreModel != "" {
+		return s.Config.ExploreModel
+	}
+	return s.active
 }
 
 // ActiveModel is the model name of the current turn.

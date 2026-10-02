@@ -8,6 +8,7 @@ import (
 
 	"github.com/cgund98/gogent"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
@@ -53,6 +54,33 @@ func TestSearchWithBlockedPathsShowsSummary(t *testing.T) {
 	}
 }
 
+// A tool that is waiting on approval renders blue, not dim, so the call that
+// needs attention stands out. The selected card keeps the bold blue the approval
+// prompt used to draw.
+func TestPendingToolRendersBlue(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	const (
+		blue     = "\x1b[38;5;86m"
+		boldBlue = "\x1b[1;38;5;86m"
+		dim      = "\x1b[38;5;245m"
+	)
+
+	got := renderToolLine("$ echo hi", toolCardPending, false, 40)
+	if !strings.HasPrefix(got, blue) || strings.Contains(got, dim) {
+		t.Fatalf("pending card = %q, want the blue style", got)
+	}
+
+	selected := renderToolLine("$ echo hi", toolCardPending, true, 40)
+	if !strings.HasPrefix(selected, boldBlue) {
+		t.Fatalf("selected pending card = %q, want the bold blue style", selected)
+	}
+
+	running := renderToolLine("$ echo hi", toolCardRunning, false, 40)
+	if !strings.HasPrefix(running, dim) {
+		t.Fatalf("running card = %q, want the dim style", running)
+	}
+}
+
 func TestFailedEditHidesDiff(t *testing.T) {
 	args := json.RawMessage(`{"path":"demo.txt","old":"alpha","new":"beta"}`)
 	for _, card := range []toolCardView{
@@ -64,8 +92,11 @@ func TestFailedEditHidesDiff(t *testing.T) {
 		}
 	}
 	pending := toolCardView{ToolName: "edit_file", Args: args, State: toolCardPending}
-	if renderApprovalBody(pending, 80) == "" {
-		t.Fatal("approval card should still show the diff")
+	if renderApprovalBody(pending, 80) != "" {
+		t.Fatal("the transcript renders the pending diff, so the approval body must not repeat it")
+	}
+	if renderToolBody(pending, 80) == "" {
+		t.Fatal("the transcript should still show the pending diff")
 	}
 }
 
@@ -255,13 +286,18 @@ func TestPlanResultIsReadable(t *testing.T) {
 }
 
 func TestApprovalPromptShowsReason(t *testing.T) {
+	// The tool headline is rendered by the transcript card, not here, so the
+	// prompt carries only the reason and the access being requested.
 	view := stripANSI(renderApprovalPrompt(gogent.PendingToolCall{
 		ToolName: "read_file",
 		Args:     json.RawMessage(`{"path":".env"}`),
 		Reason:   "Protected path **/.env: scratch/demo/.env",
 	}, nil, 60))
-	if !strings.Contains(view, "read .env") || !strings.Contains(view, "Protected path **/.env: scratch/demo/.env") || strings.Contains(view, `"path"`) {
+	if !strings.Contains(view, "Protected path **/.env: scratch/demo/.env") || strings.Contains(view, `"path"`) {
 		t.Fatalf("prompt = %q", view)
+	}
+	if strings.Contains(view, "read .env") {
+		t.Fatalf("prompt repeated the tool headline: %q", view)
 	}
 
 	shell := stripANSI(renderApprovalPrompt(gogent.PendingToolCall{
@@ -269,8 +305,11 @@ func TestApprovalPromptShowsReason(t *testing.T) {
 		Args:     json.RawMessage(`{"command":"cat .env","read_paths":[".env"]}`),
 		Reason:   "Elevated file access: read /work/.env",
 	}, nil, 60))
-	if !strings.Contains(shell, "$ cat .env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
+	if !strings.Contains(shell, "Elevated file access: read /work/.env") || !strings.Contains(shell, "read .env") || strings.Contains(shell, `"command"`) {
 		t.Fatalf("shell prompt = %q", shell)
+	}
+	if strings.Contains(shell, "$ cat .env") {
+		t.Fatalf("shell prompt repeated the tool headline: %q", shell)
 	}
 
 	unknown := stripANSI(renderApprovalPrompt(gogent.PendingToolCall{

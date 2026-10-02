@@ -28,9 +28,17 @@ The sandbox wraps a child process, so it applies to the tools that spawn one:
 | Tool | Sandboxed |
 |------|-----------|
 | `shell` | Yes. Every command runs as a child under a profile. |
+| `explore` | Indirectly. Its `grep` runs the ripgrep binary under a profile when ripgrep is available. |
 | `delegate` | Yes, indirectly. The child agent's `shell` calls are sandboxed the same way. |
-| `read_file`, `grep`, `find`, `edit_file` | No process. These run in the host and check the shared rule set before they open a path. |
+| `read_file`, `grep`, `find`, `edit_file` | No process. These run in the host and check the shared rule set before they open a path. The walker `grep` is the fallback when ripgrep is not available. |
 | `web_search`, `web_fetch`, `tasks`, `write_plan` | No process, and no filesystem access to protect. |
+
+The ripgrep search runs read-only under the same profile `shell` uses: the
+workspace is the only read root, the network is denied, and the ripgrep binary's
+own directory is opened as an extra read so a binary under a denied prefix such
+as `/Users` is reachable. Every match is re-checked against the shared rule set
+afterwards, so a protected file is dropped and reported in `denied` even if the
+profile somehow allowed it. See [Tools](../reference/tools.md#grep).
 
 The host process itself is not sandboxed. It holds your API key, the secret
 values, and the policy, and it computes each profile. It is the trust root.

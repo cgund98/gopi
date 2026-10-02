@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/cgund98/gogent"
 
@@ -42,21 +43,32 @@ type EditFile struct {
 	Grants  *ReadGrants
 	OnWrite func(EditNote)
 
+	// mu guards seen and serializes Execute. Execute is a read-modify-write of one
+	// file plus the baseline bookkeeping in noteWrite, and gogent runs a turn's
+	// tool calls concurrently, so two edit_file calls would otherwise race on seen
+	// (concurrent map writes) or each read the original file and lose an edit.
+	mu   sync.Mutex
 	seen map[string]bool
 }
 
 // Reset forgets which paths already have a baseline. A new chat uses it.
 func (t *EditFile) Reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.seen = map[string]bool{}
 }
 
 // Forget lets the next edit of path capture a new baseline.
 func (t *EditFile) Forget(path string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	delete(t.seen, path)
 }
 
 // Seed marks paths that already have a baseline so a later edit keeps it.
 func (t *EditFile) Seed(paths []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.seen == nil {
 		t.seen = map[string]bool{}
 	}
@@ -91,6 +103,11 @@ func (t *EditFile) RequiresApproval(_ context.Context, raw json.RawMessage) (gog
 }
 
 func (t *EditFile) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	// Held for the whole read-modify-write so concurrent edits serialize and each
+	// one sees the previous write. noteWrite runs under it and does not lock again.
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	var args editFileArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, fmt.Errorf("parse arguments: %w", err)
@@ -148,6 +165,7 @@ func (t *EditFile) locate(raw json.RawMessage) (resolved string, outside bool, e
 	return t.Root.Canonical(args.Path)
 }
 
+// noteWrite assumes the caller already holds t.mu.
 func (t *EditFile) noteWrite(path string, created bool, before []byte) {
 	if t.seen == nil {
 		t.seen = map[string]bool{}

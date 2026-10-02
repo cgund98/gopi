@@ -24,6 +24,12 @@ import (
 	"github.com/cgund98/gopi/internal/toolview"
 )
 
+// errUnknownCommand marks a status message that should be drawn in the error
+// color. The chat model renders m.status, so this error is only a flag: the
+// sentence the user reads is built in that field, where it can be capitalized
+// and punctuated like the other status messages.
+var errUnknownCommand = errors.New("unknown command")
+
 type chatModel struct {
 	ctx      context.Context
 	chatID   string
@@ -33,7 +39,7 @@ type chatModel struct {
 	events   *gogent.ChannelBroadcaster
 	// renderers are custom tool renderers, already wrapped by safeRenderers.
 	renderers map[string]toolview.Renderer
-	subagent  *tools.DelegateProgress
+	subagent  *tools.SubagentProgress
 
 	messages         []gogent.Message
 	toolCards        []toolCardView
@@ -108,6 +114,10 @@ type chatModel struct {
 
 	width  int
 	height int
+
+	// approvalFocusHistory is true when tab has moved focus from the approval
+	// choices to the chat history.
+	approvalFocusHistory bool
 }
 
 type chatEventMsg struct {
@@ -421,16 +431,29 @@ func (m *chatModel) thinkingLabel() string {
 	return formatThought(time.Since(m.workStarted))
 }
 
-// subagentLabel reads like "Subagent 42s · 3 tool calls · grep resume".
-func subagentLabel(status tools.DelegateStatus, now time.Time) string {
-	parts := []string{"Subagent " + formatThought(now.Sub(status.Started))}
+// subagentLabel reads like "Subagent 42s · 3 tool calls · grep resume", or
+// "Explore 12s · 5 searches · grep Resume" for the explore subagent.
+func subagentLabel(status tools.SubagentStatus, now time.Time) string {
+	verb := "Subagent"
+	if status.Kind == "explore" {
+		verb = "Explore"
+	}
+	parts := []string{verb + " " + formatThought(now.Sub(status.Started))}
 	switch status.ToolCalls {
 	case 0:
 		parts = append(parts, "starting")
-	case 1:
-		parts = append(parts, "1 tool call")
 	default:
-		parts = append(parts, fmt.Sprintf("%d tool calls", status.ToolCalls))
+		// Explore is a search tool, so its activity count reads as searches.
+		// Until it has searched, fall back to the plain tool-call count.
+		noun, plural := "tool call", "tool calls"
+		count := status.ToolCalls
+		if status.Kind == "explore" && status.Searches > 0 {
+			noun, plural, count = "search", "searches", status.Searches
+		}
+		if count == 1 {
+			plural = noun
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", count, plural))
 	}
 	if status.Last != "" {
 		parts = append(parts, status.Last)
@@ -547,7 +570,14 @@ func (m *chatModel) handleWheel(msg tea.MouseMsg) tea.Cmd {
 		}
 	case m.planOpen:
 		scrollLines(&m.planVP, delta)
-	case m.sessionsOpen, m.plansOpen, m.inApprovalMode():
+	case m.sessionsOpen, m.plansOpen:
+	case m.inApprovalMode():
+		// The approval prompt can be long, so the wheel scrolls the chat history
+		// unless the choices still hold focus.
+		if m.approvalFocusHistory {
+			scrollLines(&m.transcriptVP, delta)
+			m.followChatEnd = m.transcriptVP.AtBottom()
+		}
 	default:
 		scrollLines(&m.transcriptVP, delta)
 		m.followChatEnd = m.transcriptVP.AtBottom()
@@ -583,6 +613,10 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.inApprovalMode() {
 		return m.handleApprovalKey(msg)
 	}
+	// Give the composer its full height before the textarea sees the key, so its
+	// internal viewport does not scroll to follow the cursor before the layout
+	// grows. applyLayout restores the exact height on the next render.
+	m.growComposer()
 
 	if m.busy && historyScrollKey(msg) {
 		return m.scrollHistory(msg)
@@ -636,6 +670,7 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
+		name := strings.Fields(text)[0]
 		if text == "/help" {
 			m.input.SetValue("")
 			m.status = helpText
@@ -664,24 +699,24 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.completeOpen = false
 			return m, m.compact()
 		}
-		if text == "/mouse" || strings.HasPrefix(text, "/mouse ") {
+		if name == "/mouse" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			return m, m.handleMouse(text)
 		}
-		if strings.HasPrefix(text, "/model") {
+		if name == "/model" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			m.handleModel(text)
 			return m, nil
 		}
-		if strings.HasPrefix(text, "/effort") {
+		if name == "/effort" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			m.handleEffort(text)
 			return m, nil
 		}
-		if strings.HasPrefix(text, "/allowpath ") {
+		if name == "/allowpath" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			m.handleAllowPath(text)
@@ -709,6 +744,11 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = mode
 			m.input.Prompt = modePrompt(mode)
 			m.status = ""
+			return m, nil
+		}
+		if strings.HasPrefix(text, "/") {
+			m.err = errUnknownCommand
+			m.status = fmt.Sprintf("unknown command %s. Type /help for the list.", name)
 			return m, nil
 		}
 		m.input.SetValue("")
@@ -750,7 +790,7 @@ const footerBufferLines = 1
 func (m *chatModel) footerLines() int {
 	footer := footerBufferLines + 2
 	if m.inApprovalMode() {
-		footer += 12
+		footer += m.approvalBlockLines()
 	} else if m.status != "" || m.err != nil {
 		n := len(strings.Split(wrapBlock(m.status, m.width), "\n"))
 		if n < 1 {
@@ -770,35 +810,55 @@ func (m *chatModel) footerLines() int {
 }
 
 func (m *chatModel) applyLayout() {
-	innerW := m.width
-	if innerW < 20 {
-		innerW = 20
+	innerW := m.composerWidth()
+
+	// Size the footer widgets before measuring. composerRows() reads the input
+	// width through LineInfo(), and both feed footerLines().
+	m.syncComposer(innerW)
+	if m.inApprovalMode() {
+		_, listRows, _ := m.approvalSpace()
+		m.approvalList.SetWidth(innerW)
+		m.approvalList.SetHeight(listRows)
 	}
 
 	footer := m.footerLines()
 	transcriptH := m.height - footer
-	if transcriptH < 4 {
-		transcriptH = 4
+	if transcriptH < 1 {
+		transcriptH = 1
 	}
 
 	m.transcriptVP.Width = innerW
 	m.transcriptVP.Height = transcriptH
-
-	if m.inApprovalMode() {
-		m.approvalList.SetWidth(innerW)
-		m.approvalList.SetHeight(4)
-	} else {
-		m.syncComposer(innerW)
-	}
 }
 
-const maxComposerLines = 8
+// composerWidth is the layout width shared by the transcript and the composer.
+func (m *chatModel) composerWidth() int {
+	width := m.width
+	if width < 20 {
+		width = 20
+	}
+	return width
+}
+
+const (
+	maxComposerLines   = 8
+	approvalListHeight = 4
+)
+
+// growComposer lifts the composer to its maximum height before the textarea
+// applies a key. Without it the textarea's viewport scrolls to follow the cursor
+// on the keystroke that wraps, hiding the first (prompt) row until the next
+// layout runs. applyLayout restores the exact height.
+func (m *chatModel) growComposer() {
+	m.input.SetHeight(maxComposerLines)
+}
 
 func (m *chatModel) composerOpen() bool {
 	return !m.sessionLoading && !m.busy && !m.inApprovalMode() && !m.planOpen && !m.plansOpen && !m.reviewOpen && !m.sessionsOpen
 }
 
 func (m *chatModel) insertNewline() (tea.Model, tea.Cmd) {
+	m.growComposer()
 	m.input.InsertString("\n")
 	m.syncComplete()
 	return m, nil
@@ -828,11 +888,7 @@ func csiReport(body string) string {
 }
 
 func (m *chatModel) inputExtraLines() int {
-	width := m.width
-	if width < 20 {
-		width = 20
-	}
-	return m.composerRows(width) - 1
+	return m.composerRows() - 1
 }
 
 func (m *chatModel) syncComposer(width int) {
@@ -852,24 +908,37 @@ func (m *chatModel) syncComposer(width int) {
 		width = 1
 	}
 	m.input.SetWidth(width)
-	m.input.SetHeight(m.composerRows(width))
+	m.input.SetHeight(m.composerRows())
 }
 
-func (m *chatModel) composerRows(totalWidth int) int {
-	promptWidth := lipgloss.Width(modePrompt(m.mode))
-	if promptWidth < 1 {
-		promptWidth = 1
+// composerRows reports the rows the composer will draw. It asks the textarea for
+// its own word wrap through LineInfo(), which only describes the cursor's
+// logical line, so it walks a copy of the model. LineInfo() reads the input's
+// width, so set that width before measuring.
+func (m *chatModel) composerRows() int {
+	probe := m.input
+	probe.CursorStart()
+	for i := 0; i < probe.LineCount(); i++ {
+		probe.CursorUp()
 	}
-	textWidth := totalWidth - promptWidth
-	if textWidth < 1 {
-		textWidth = 1
+	n := 0
+	for i := 0; i < probe.LineCount(); i++ {
+		n += probe.LineInfo().Height
+		probe.CursorDown()
 	}
-	n := wrappedLineCount(m.input.Value(), textWidth)
 	if n < 1 {
 		n = 1
 	}
 	if n > maxComposerLines {
 		n = maxComposerLines
+	}
+	// Leave room for the prompt, the gap, the divider, and the status line so
+	// the frame never grows past the terminal.
+	if limit := m.height - 4; limit > 0 && n > limit {
+		n = limit
+	}
+	if n < 1 {
+		n = 1
 	}
 	return n
 }
@@ -884,27 +953,6 @@ func composerCanMoveDown(input textarea.Model) bool {
 	}
 	info := input.LineInfo()
 	return info.RowOffset < info.Height-1
-}
-
-// wrappedLineCount is the number of visual rows a textarea will use. It counts
-// hard newlines and soft wraps, including the extra row bubbles adds when a
-// line fills the wrap width.
-func wrappedLineCount(text string, width int) int {
-	if width < 1 {
-		width = 1
-	}
-	n := 0
-	for _, line := range strings.Split(text, "\n") {
-		parts := wrapWidth(line, width)
-		n += len(parts)
-		if len(parts) > 0 && lipgloss.Width(parts[len(parts)-1]) >= width {
-			n++
-		}
-	}
-	if n < 1 {
-		return 1
-	}
-	return n
 }
 
 func (m *chatModel) View() string {
@@ -945,15 +993,7 @@ func (m *chatModel) View() string {
 	}
 
 	if m.inApprovalMode() {
-		b.WriteString(renderDivider(m.width))
-		b.WriteByte('\n')
-		if pending, ok := m.currentPendingApproval(); ok {
-			b.WriteString(renderApprovalPrompt(pending, m.renderers[pending.ToolName], m.width))
-			b.WriteByte('\n')
-		}
-		b.WriteString(m.approvalList.View())
-		b.WriteByte('\n')
-		b.WriteString(helpStyle.Render(approvalHelpText))
+		b.WriteString(m.approvalBlock())
 	} else if m.busy {
 		label := " Thinking"
 		if thought := m.thinkingLabel(); thought != "" {
@@ -961,6 +1001,9 @@ func (m *chatModel) View() string {
 		}
 		if status, ok := m.subagent.Snapshot(); ok {
 			label = " " + subagentLabel(status, time.Now())
+			if status.Kind == "explore" {
+				label = exploreStyle.Render(label)
+			}
 		}
 		label = truncateWidth(label, m.width-lipgloss.Width(modePrompt(m.mode))-lipgloss.Width(m.spinner.View())-lipgloss.Width("esc cancel")-1)
 		b.WriteString(renderBusyLine(modePrompt(m.mode)+m.spinner.View()+statusStyle.Render(label), helpStyle.Render("esc cancel"), m.width))
