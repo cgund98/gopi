@@ -168,7 +168,7 @@ func TestGrantReadLetsLaterReadSkipApproval(t *testing.T) {
 	delegate := &Delegate{
 		Root:  root,
 		Rules: rules,
-		NewModel: func(*gogent.ToolRegistry) (gogent.Model, error) {
+		NewModel: func(*gogent.ToolRegistry, string) (gogent.Model, error) {
 			return model, nil
 		},
 	}

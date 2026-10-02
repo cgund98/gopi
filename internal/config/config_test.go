@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	gopisecrets "github.com/cgund98/gopi/internal/secrets"
 )
@@ -183,6 +184,77 @@ build = "kimi/kimi-k2.6"
 	}
 	if _, err := Load(dir); err == nil {
 		t.Fatal("expected unsupported model to fail")
+	}
+}
+
+func TestLoadSearchEngineAndSubagents(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Defaults: auto search, no rg path, the documented explore caps.
+	write("model = \"gpt-5.6-luna\"\n")
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SearchEngine != "auto" || cfg.RipgrepPath != "" {
+		t.Fatalf("search = %q %q", cfg.SearchEngine, cfg.RipgrepPath)
+	}
+	if cfg.ExploreMaxCalls != 6 || cfg.ExploreIterations != 40 || cfg.ExploreTimeout != 120*time.Second {
+		t.Fatalf("explore caps = %d %d %s", cfg.ExploreMaxCalls, cfg.ExploreIterations, cfg.ExploreTimeout)
+	}
+	if cfg.ExploreModel != "" || cfg.ModelFor("explore") != "gpt-5.6-luna" {
+		t.Fatalf("explore model = %q %q", cfg.ExploreModel, cfg.ModelFor("explore"))
+	}
+
+	// Every key parses, and models.explore overrides the explore model only.
+	write(`
+model = "gpt-5.6-luna"
+
+[models]
+explore = "gpt-4o"
+
+[search]
+engine = "builtin"
+ripgrep_path = "/opt/homebrew/bin/rg"
+
+[subagents]
+explore_max_calls = 2
+explore_iterations = 10
+explore_timeout_seconds = 30
+`)
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelFor("explore") != "gpt-4o" || cfg.ModelFor("agent") != "gpt-5.6-luna" {
+		t.Fatalf("models = %+v", cfg)
+	}
+	if cfg.SearchEngine != "builtin" || cfg.RipgrepPath != "/opt/homebrew/bin/rg" {
+		t.Fatalf("search = %q %q", cfg.SearchEngine, cfg.RipgrepPath)
+	}
+	if cfg.ExploreMaxCalls != 2 || cfg.ExploreIterations != 10 || cfg.ExploreTimeout != 30*time.Second {
+		t.Fatalf("explore caps = %d %d %s", cfg.ExploreMaxCalls, cfg.ExploreIterations, cfg.ExploreTimeout)
+	}
+
+	// An unknown engine is a load error, like an unknown model name.
+	write("model = \"gpt-5.6-luna\"\n\n[search]\nengine = \"grep2\"\n")
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected an unknown search engine to fail")
+	}
+
+	// An invalid explore model is rejected too.
+	write("model = \"gpt-5.6-luna\"\n\n[models]\nexplore = \"gpt-9\"\n")
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected an unknown explore model to fail")
 	}
 }
 

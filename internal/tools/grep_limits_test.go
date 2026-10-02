@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,5 +99,98 @@ func TestClipLineKeepsShortLines(t *testing.T) {
 	}
 	if got := clipLine(strings.Repeat("é", 400), "missing", 10); got != strings.Repeat("é", 10)+"…" {
 		t.Fatalf("clip without match = %q", got)
+	}
+}
+
+// runGrepWithBackend runs one grep with an explicit engine and reports the
+// backend the result names.
+func runGrepWithBackend(t *testing.T, rgPath string, args string) (map[string]any, grepResult) {
+	t.Helper()
+	root := openTemp(t)
+	files := map[string]string{
+		"main.go":     "package main\n// resume here\n",
+		"notes.txt":   "resume in a text file\n",
+		".gitignore":  "notes.txt\n",
+		"ignored.log": "debug log line\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(root.Path, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rules, err := policy.Build(root.Path, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := &Grep{Root: root, Rules: rules, Engine: EngineAuto, RGPath: rgPath, HomeDir: t.TempDir()}
+	raw, err := tool.Execute(context.Background(), json.RawMessage(args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	var result grepResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	return payload, result
+}
+
+func TestGrepBackendIsReportedAndFindsGitignoredFiles(t *testing.T) {
+	rgPath, _ := exec.LookPath("rg")
+	cases := []struct {
+		name    string
+		rgPath  string
+		backend string
+	}{
+		{name: "builtin", rgPath: "", backend: BackendBuiltin},
+		{name: "ripgrep", rgPath: rgPath, backend: BackendRipgrep},
+	}
+	for _, tc := range cases {
+		if tc.backend == BackendRipgrep && tc.rgPath == "" {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			payload, result := runGrepWithBackend(t, tc.rgPath, `{"pattern":"resume"}`)
+			if payload["backend"] != tc.backend {
+				t.Fatalf("backend = %v", payload["backend"])
+			}
+			// A .gitignore must not hide a file: the walker skips only .git, and
+			// ripgrep is told --no-ignore to match it.
+			paths := map[string]bool{}
+			for _, match := range result.Matches {
+				paths[match.Path] = true
+			}
+			if !paths["main.go"] || !paths["notes.txt"] {
+				t.Fatalf("matches = %+v", result.Matches)
+			}
+		})
+	}
+}
+
+func TestGrepRegexWorksOnBothEngines(t *testing.T) {
+	rgPath, _ := exec.LookPath("rg")
+	paths := []string{""}
+	names := []string{"builtin"}
+	if rgPath != "" {
+		paths = append(paths, rgPath)
+		names = append(names, "ripgrep")
+	}
+	for i, path := range paths {
+		t.Run(names[i], func(t *testing.T) {
+			_, result := runGrepWithBackend(t, path, `{"pattern":"resum\\w","regex":true}`)
+			if len(result.Matches) == 0 {
+				t.Fatalf("regex found nothing: %+v", result)
+			}
+		})
+	}
+}
+
+func TestGrepRejectsAnInvalidRegex(t *testing.T) {
+	root := openTemp(t)
+	if _, err := (&Grep{Root: root}).Execute(context.Background(), json.RawMessage(`{"pattern":"[","regex":true}`)); err == nil {
+		t.Fatal("an invalid regex should fail")
 	}
 }

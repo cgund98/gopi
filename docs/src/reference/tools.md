@@ -18,6 +18,7 @@ active mode are offered to the model.
 | [`tasks`](#tasks) | yes | no | no | no |
 | [`web_search`](#web_search) | yes | yes | yes | no |
 | [`web_fetch`](#web_fetch) | yes | yes | yes | no |
+| [`explore`](#explore) | yes | yes | yes | no |
 | [`delegate`](#delegate) | yes | no | no | no |
 
 A custom tool added with `WithTool` or `WithToolFactory` is registered for the
@@ -48,15 +49,27 @@ covers it.
 
 ## grep
 
-Search file contents for a substring.
+Search file contents.
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `pattern` | string | yes | Substring to search for. Not a regex. |
+| `pattern` | string | yes | What to search for. A literal substring unless `regex` is true. |
 | `path` | string | no | File or directory to search. Defaults to the workspace. |
+| `regex` | bool | no | Treat `pattern` as a Go regular expression instead of a literal. |
 | `read_paths` | string[] | no | Protected paths, or paths outside the workspace, to include. |
 
-Files are matched by substring, not regular expression. Binary files are skipped
+Search runs on **ripgrep** when the `rg` binary is found, under the same sandbox
+profile [`shell`](#shell) uses: the workspace is the only read root, and the
+network is denied. Otherwise it falls back to a built-in Go walker. The result
+names the engine that ran in `backend` (`ripgrep` or `builtin`), so a fallback is
+visible rather than silent. See [Configuration](configuration.md) for
+`[search] engine` and `[search] ripgrep_path`.
+
+Both engines match the same files: `.git` is skipped, and a `.gitignore` does
+**not** hide a file, because the walker reads everything and ripgrep is passed
+`--no-ignore --hidden`.
+
+Files are matched by literal substring unless `regex` is true. Binary files are skipped
 and counted in `binary_files_skipped`. Matching lines are clipped to about 300
 runes centered on the match. Results stop at 50 matches or 32 KiB, whichever
 comes first, and set `truncated`.
@@ -212,6 +225,27 @@ The system prompt names gopi's own documentation, so a question about how gopi
 works is answered from the published pages rather than from the prompt text. See
 [The documentation pointer](../concepts/instructions.md#the-documentation-pointer).
 
+## explore
+
+Hand one search task to a read-only subagent.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `task` | string | yes | The search task. Be specific about what to find and what to report. |
+| `thoroughness` | string | no | `quick`, `medium`, or `very thorough`. Defaults to `medium`. |
+| `instructions` | string | no | Notes appended to the subagent's prompt, such as where to start. |
+
+Returns the child's `kind` (`explore`), `answer`, a `tool_calls` count, and any
+`denied` summaries. The child has `read_file`, `grep`, and `find` — no `shell`,
+no `edit_file`, no `delegate` — so anything that has to run a command belongs in
+[`delegate`](#delegate). It reads the session's read grants but cannot add to them.
+
+Never pauses, for the same reason `delegate` does not: a call the child would need
+approval for fails with `access_denied`. Defaults are 40 turns, 2 minutes, and 6
+explore calls per session; the answer is untrusted text. The child's system prompt
+is built in and can be replaced by `~/.gopi/explore.md`. See
+[Subagents](../concepts/subagents.md).
+
 ## delegate
 
 Hand a bounded investigation to a subagent.
@@ -220,9 +254,10 @@ Hand a bounded investigation to a subagent.
 |----------|------|----------|-------------|
 | `task` | string | yes | A self-contained question for the subagent. |
 
-Returns the child's `answer`, a `tool_calls` count, and any `denied` summaries.
-Never pauses: a call the child would need approval for fails with `access_denied`
-instead. The child has `read_file`, `grep`, `find`, and `shell` only, and gets 50
-turns, 2 minutes, and a session budget of 4 delegate calls. See
-[Subagents](../concepts/subagents.md).
+Returns `kind` (`subagent`), the child's `answer`, a `tool_calls` count, and any
+`denied` summaries. Never pauses: a call the child would need approval for fails
+with `access_denied` instead. The child has `read_file`, `grep`, `find`, and
+`shell` only, and gets 50 turns, 2 minutes, and a session budget of 4 delegate
+calls. Use [`explore`](#explore) when the work is pure searching; use `delegate`
+when a command has to run. See [Subagents](../concepts/subagents.md).
 

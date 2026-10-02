@@ -24,6 +24,12 @@ import (
 	"github.com/cgund98/gopi/internal/toolview"
 )
 
+// errUnknownCommand marks a status message that should be drawn in the error
+// color. The chat model renders m.status, so this error is only a flag: the
+// sentence the user reads is built in that field, where it can be capitalized
+// and punctuated like the other status messages.
+var errUnknownCommand = errors.New("unknown command")
+
 type chatModel struct {
 	ctx      context.Context
 	chatID   string
@@ -33,7 +39,7 @@ type chatModel struct {
 	events   *gogent.ChannelBroadcaster
 	// renderers are custom tool renderers, already wrapped by safeRenderers.
 	renderers map[string]toolview.Renderer
-	subagent  *tools.DelegateProgress
+	subagent  *tools.SubagentProgress
 
 	messages         []gogent.Message
 	toolCards        []toolCardView
@@ -425,16 +431,29 @@ func (m *chatModel) thinkingLabel() string {
 	return formatThought(time.Since(m.workStarted))
 }
 
-// subagentLabel reads like "Subagent 42s · 3 tool calls · grep resume".
-func subagentLabel(status tools.DelegateStatus, now time.Time) string {
-	parts := []string{"Subagent " + formatThought(now.Sub(status.Started))}
+// subagentLabel reads like "Subagent 42s · 3 tool calls · grep resume", or
+// "Explore 12s · 5 searches · grep Resume" for the explore subagent.
+func subagentLabel(status tools.SubagentStatus, now time.Time) string {
+	verb := "Subagent"
+	if status.Kind == "explore" {
+		verb = "Explore"
+	}
+	parts := []string{verb + " " + formatThought(now.Sub(status.Started))}
 	switch status.ToolCalls {
 	case 0:
 		parts = append(parts, "starting")
-	case 1:
-		parts = append(parts, "1 tool call")
 	default:
-		parts = append(parts, fmt.Sprintf("%d tool calls", status.ToolCalls))
+		// Explore is a search tool, so its activity count reads as searches.
+		// Until it has searched, fall back to the plain tool-call count.
+		noun, plural := "tool call", "tool calls"
+		count := status.ToolCalls
+		if status.Kind == "explore" && status.Searches > 0 {
+			noun, plural, count = "search", "searches", status.Searches
+		}
+		if count == 1 {
+			plural = noun
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", count, plural))
 	}
 	if status.Last != "" {
 		parts = append(parts, status.Last)
@@ -728,8 +747,8 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if strings.HasPrefix(text, "/") {
-			m.err = fmt.Errorf("unknown command %s. Type /help for the list.", name)
-			m.status = m.err.Error()
+			m.err = errUnknownCommand
+			m.status = fmt.Sprintf("unknown command %s. Type /help for the list.", name)
 			return m, nil
 		}
 		m.input.SetValue("")
@@ -982,6 +1001,9 @@ func (m *chatModel) View() string {
 		}
 		if status, ok := m.subagent.Snapshot(); ok {
 			label = " " + subagentLabel(status, time.Now())
+			if status.Kind == "explore" {
+				label = exploreStyle.Render(label)
+			}
 		}
 		label = truncateWidth(label, m.width-lipgloss.Width(modePrompt(m.mode))-lipgloss.Width(m.spinner.View())-lipgloss.Width("esc cancel")-1)
 		b.WriteString(renderBusyLine(modePrompt(m.mode)+m.spinner.View()+statusStyle.Render(label), helpStyle.Render("esc cancel"), m.width))

@@ -120,7 +120,7 @@ func toolCardIndex(cards []toolCardView, toolCallID string) int {
 }
 
 func renderInlineToolBlock(card toolCardView, selected bool, width int) string {
-	header := renderToolLine(toolHeadline(card), card.State, selected, width)
+	header := renderToolLineFor(card.ToolName, toolHeadline(card), card.State, selected, width)
 	body := renderToolBody(card, width)
 	if body == "" {
 		return header
@@ -129,6 +129,12 @@ func renderInlineToolBlock(card toolCardView, selected bool, width int) string {
 }
 
 func renderToolLine(name string, state toolCardState, selected bool, width int) string {
+	return renderToolLineFor("", name, state, selected, width)
+}
+
+// renderToolLineFor is renderToolLine with the tool's name, so a subagent's card
+// can carry its own color. tool is empty for a plain card.
+func renderToolLineFor(tool, name string, state toolCardState, selected bool, width int) string {
 	text := "> " + name
 	maxWidth := width
 	if maxWidth < 8 {
@@ -140,6 +146,8 @@ func renderToolLine(name string, state toolCardState, selected bool, width int) 
 		style = toolSelectedStyle
 	case state == toolCardPending:
 		style = toolPendingStyle
+	case tool == "explore" && state == toolCardCompleted:
+		style = exploreStyle
 	case state == toolCardCompleted:
 		style = toolSuccessStyle
 	case state == toolCardRejected || state == toolCardFailed:

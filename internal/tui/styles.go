@@ -40,6 +40,9 @@ var (
 	askModeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true)
 	planModeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
 
+	// exploreStyle marks the explore subagent, distinct from every mode color.
+	exploreStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
+
 	promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
 
 	planTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)

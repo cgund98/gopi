@@ -8,18 +8,12 @@ import (
 	"time"
 
 	"github.com/cgund98/gogent"
-	"github.com/cgund98/gogent/inmemory"
-	"github.com/google/uuid"
 
 	"github.com/cgund98/gopi/internal/policy"
 	"github.com/cgund98/gopi/internal/workspace"
 )
 
-const (
-	defaultChildIterations = 50
-	defaultChildTimeout    = 2 * time.Minute
-	defaultDelegateCalls   = 4
-)
+const defaultDelegateCalls = 4
 
 type delegateArgs struct {
 	Task string `json:"task" jsonschema:"description=Self-contained question for the subagent. It can read, search, and run a sandboxed shell. It cannot edit, and any elevated file or network access fails closed without asking the user."`
@@ -37,13 +31,21 @@ type Delegate struct {
 	RespectGitignore bool
 	// SecretFiles are passed to the child shell so its sandbox denies them.
 	SecretFiles []string
-	Redact      func(string) string
+	// Engine, RGPath, and SearchHome select the child's search backend.
+	// RGPath is empty when the child searches with the built-in walker.
+	Engine     string
+	RGPath     string
+	SearchHome string
+	// BasePrompt returns the child's system prompt. It is a function so a prompt
+	// rebuilt after a trust decision is picked up on the next call.
+	BasePrompt func() string
+	Redact     func(string) string
 	// Grants are the parent's session read grants. The child reads through them
 	// but cannot add to them.
 	Grants   *ReadGrants
-	NewModel func(registry *gogent.ToolRegistry) (gogent.Model, error)
+	NewModel func(registry *gogent.ToolRegistry, systemPrompt string) (gogent.Model, error)
 	// Progress, when set, reports the running subagent's tool calls to the UI.
-	Progress *DelegateProgress
+	Progress *SubagentProgress
 
 	MaxIterations int
 	Timeout       time.Duration
@@ -83,34 +85,11 @@ func (t *Delegate) Execute(ctx context.Context, raw json.RawMessage) (json.RawMe
 		})
 	}
 
-	registry, err := t.childRegistry()
+	result, err := t.subagent().Run(ctx, args.Task)
 	if err != nil {
 		return nil, err
 	}
-	t.Progress.start(args.Task)
-	defer t.Progress.finish()
-	model, err := t.NewModel(registry)
-	if err != nil {
-		return nil, fmt.Errorf("build subagent model: %w", err)
-	}
-	store := inmemory.NewMessageStore()
-	agent := gogent.NewAgent(store, gogent.NopBroadcaster{}, model, registry, t.iterations())
-	chatID := uuid.NewString()
-	runCtx, cancel := context.WithTimeout(ctx, t.timeout())
-	defer cancel()
-	if err := agent.RunWithUserInput(runCtx, chatID, args.Task); err != nil {
-		return nil, err
-	}
-	messages, err := store.Load(ctx, chatID)
-	if err != nil {
-		return nil, fmt.Errorf("load subagent transcript: %w", err)
-	}
-	answer, calls, denied := summarizeChild(messages)
-	return json.Marshal(map[string]any{
-		"answer":     answer,
-		"tool_calls": calls,
-		"denied":     denied,
-	})
+	return json.Marshal(result)
 }
 
 func (t *Delegate) allowCall() bool {
@@ -144,8 +123,19 @@ func (t *Delegate) timeout() time.Duration {
 	return t.Timeout
 }
 
+func (t *Delegate) basePrompt() string {
+	if t.BasePrompt == nil {
+		return ""
+	}
+	return t.BasePrompt()
+}
+
 func (t *Delegate) childRegistry() (*gogent.ToolRegistry, error) {
-	registry := gogent.NewToolRegistry()
+	return t.subagent().registry()
+}
+
+// subagent describes the child agent this tool runs.
+func (t *Delegate) subagent() *Subagent {
 	shell := &Shell{
 		Root:             t.Root,
 		HomeDir:          t.HomeDir,
@@ -156,48 +146,23 @@ func (t *Delegate) childRegistry() (*gogent.ToolRegistry, error) {
 		Grants:           t.Grants,
 		RespectGitignore: t.RespectGitignore,
 	}
-	list := []gogent.Tool{
-		failClosed{inner: &ReadFile{Root: t.Root, Rules: t.Rules, Grants: t.Grants}},
-		failClosed{inner: &Grep{Root: t.Root, Rules: t.Rules, Grants: t.Grants}},
-		failClosed{inner: &Find{Root: t.Root, Rules: t.Rules, Grants: t.Grants}},
-		failClosed{inner: shell},
+	return &Subagent{
+		Spec: SubagentSpec{
+			Kind:   "subagent",
+			Prompt: t.basePrompt(),
+			Tools: []gogent.Tool{
+				&ReadFile{Root: t.Root, Rules: t.Rules, Grants: t.Grants},
+				&Grep{Root: t.Root, Rules: t.Rules, Grants: t.Grants, Engine: t.Engine, RGPath: t.RGPath, HomeDir: t.SearchHome, SecretFiles: t.SecretFiles, RespectGitignore: t.RespectGitignore},
+				&Find{Root: t.Root, Rules: t.Rules, Grants: t.Grants},
+				shell,
+			},
+			Iterations: t.iterations(),
+			Timeout:    t.timeout(),
+		},
+		NewModel: t.NewModel,
+		Progress: t.Progress,
+		Redact:   t.Redact,
 	}
-	for _, tool := range list {
-		if err := registry.RegisterTool(progressTool{Tool: WrapRedacting(tool, t.Redact), progress: t.Progress}); err != nil {
-			return nil, fmt.Errorf("register subagent tool %s: %w", tool.Name(), err)
-		}
-	}
-	return registry, nil
-}
-
-func summarizeChild(messages []gogent.Message) (answer string, calls int, denied []string) {
-	for _, message := range messages {
-		if message.Role == gogent.MessageRoleTool {
-			calls++
-			if line, ok := deniedLine(message.Content); ok {
-				denied = append(denied, line)
-			}
-		}
-		if message.Role == gogent.MessageRoleAssistant && message.Content != "" && len(message.ToolCalls) == 0 {
-			answer = message.Content
-		}
-	}
-	return answer, calls, denied
-}
-
-func deniedLine(content string) (string, bool) {
-	var payload struct {
-		Error   string `json:"error"`
-		Path    string `json:"path"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal([]byte(content), &payload); err != nil || payload.Error != "access_denied" {
-		return "", false
-	}
-	if payload.Path != "" {
-		return payload.Path + ": " + payload.Message, true
-	}
-	return payload.Message, true
 }
 
 var _ gogent.Tool = (*Delegate)(nil)

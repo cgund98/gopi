@@ -22,7 +22,7 @@ flowchart TB
     Registry --> ReadTools["read_file, grep, find"]
     Registry --> WriteTools["edit_file, write_plan"]
     Registry --> ShellTool["shell"]
-    Registry --> DelegateTool["delegate"]
+    Registry --> DelegateTool["explore, delegate"]
     ReadTools --> Policy["Policy engine<br/>protected paths, grants"]
     WriteTools --> Policy
     ShellTool --> Policy
@@ -98,9 +98,9 @@ tool, and a check can be routed around by a different tool. The sandbox is what
 still holds after the spawn, which is why the same protected paths that make
 `read_file` pause are also deny rules in the `shell` profile.
 
-A `delegate` child is the exception: it never pauses. Its tool set is a subset of
-the parent's, and a call it would have to pause for fails with `access_denied`
-instead. See [Subagents](subagents.md).
+The `explore` and `delegate` children are the exception: they never pause. Their
+tool sets are subsets of the parent's, and a call they would have to pause for
+fails with `access_denied` instead. See [Subagents](subagents.md).
 
 ## The four layers
 
@@ -137,9 +137,9 @@ Modes change which tools the registry exposes, not how a call is executed:
 
 | Mode | What it can do |
 |------|----------------|
-| Agent | Read, edit, run shell commands, use the web, and `delegate` |
-| Ask | Read the workspace and the web |
-| Plan | Read, run shell commands, and write a plan with `write_plan` |
+| Agent | Read, edit, run shell commands, use the web, `explore`, and `delegate` |
+| Ask | Read the workspace and the web, and search with `explore` |
+| Plan | Read, run shell commands, search with `explore`, and write a plan with `write_plan` |
 
 Switch with `/agent`, `/ask`, `/plan`, or `/mode <name>`. See
 [Slash commands](../reference/slash-commands.md).

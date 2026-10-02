@@ -104,7 +104,7 @@ func TestChildToolCallsReportProgress(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root.Path, "main.go"), []byte("package main\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	progress := &DelegateProgress{}
+	progress := &SubagentProgress{}
 	registry, err := (&Delegate{Root: root, Progress: progress}).childRegistry()
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestDelegateReturnsAnswerWithoutProtectedBody(t *testing.T) {
 	tool := &Delegate{
 		Root:  root,
 		Rules: rules,
-		NewModel: func(*gogent.ToolRegistry) (gogent.Model, error) {
+		NewModel: func(*gogent.ToolRegistry, string) (gogent.Model, error) {
 			return model, nil
 		},
 	}
@@ -227,7 +227,7 @@ func TestDelegateFanoutStops(t *testing.T) {
 	tool := &Delegate{
 		Root:     openTemp(t),
 		MaxCalls: 4,
-		NewModel: func(*gogent.ToolRegistry) (gogent.Model, error) {
+		NewModel: func(*gogent.ToolRegistry, string) (gogent.Model, error) {
 			started++
 			return &scriptModel{steps: []gogent.Message{gogent.NewAssistantMessage("ok")}}, nil
 		},

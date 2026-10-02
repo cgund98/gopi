@@ -32,7 +32,7 @@ Why gopi behaves the way it does.
 - [Secrets](concepts/secrets.md) — the broker and redaction.
 - [Instructions](concepts/instructions.md) — how the system prompt is assembled.
 - [Skills](concepts/skills.md) — the catalog, the body, and untrusted content.
-- [Subagents](concepts/subagents.md) — `delegate` and the child policy.
+- [Subagents](concepts/subagents.md) — `explore`, `delegate`, and the child policy.
 - [Security model](concepts/security-model.md) — principles, the threat model, and the escape tests.
 
 ## Reference
