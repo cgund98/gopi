@@ -651,6 +651,7 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
+		name := strings.Fields(text)[0]
 		if text == "/help" {
 			m.input.SetValue("")
 			m.status = helpText
@@ -679,24 +680,24 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.completeOpen = false
 			return m, m.compact()
 		}
-		if text == "/mouse" || strings.HasPrefix(text, "/mouse ") {
+		if name == "/mouse" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			return m, m.handleMouse(text)
 		}
-		if strings.HasPrefix(text, "/model") {
+		if name == "/model" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			m.handleModel(text)
 			return m, nil
 		}
-		if strings.HasPrefix(text, "/effort") {
+		if name == "/effort" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			m.handleEffort(text)
 			return m, nil
 		}
-		if strings.HasPrefix(text, "/allowpath ") {
+		if name == "/allowpath" {
 			m.input.SetValue("")
 			m.completeOpen = false
 			m.handleAllowPath(text)
@@ -724,6 +725,11 @@ func (m *chatModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = mode
 			m.input.Prompt = modePrompt(mode)
 			m.status = ""
+			return m, nil
+		}
+		if strings.HasPrefix(text, "/") {
+			m.err = fmt.Errorf("unknown command %s. Type /help for the list.", name)
+			m.status = m.err.Error()
 			return m, nil
 		}
 		m.input.SetValue("")

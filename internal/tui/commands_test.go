@@ -236,3 +236,33 @@ func TestEffortCommandSetsEffort(t *testing.T) {
 		t.Fatalf("expected usage error, got: %q", chat.status)
 	}
 }
+
+func TestUnknownCommandIsRejected(t *testing.T) {
+	chat := newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+
+	// Unknown command is rejected
+	chat.input.SetValue("/hlep")
+	updated, cmd := chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.err == nil || !strings.Contains(chat.status, "unknown command") || chat.input.Value() != "/hlep" {
+		t.Fatalf("unknown command: cmd=%v err=%v status=%q input=%q", cmd, chat.err, chat.status, chat.input.Value())
+	}
+
+	// Known command with bad args is rejected
+	chat = newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.input.SetValue("/agent extra")
+	updated, cmd = chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.err == nil || !strings.Contains(chat.status, "unknown command") || chat.input.Value() != "/agent extra" {
+		t.Fatalf("bad args: cmd=%v err=%v status=%q input=%q", cmd, chat.err, chat.status, chat.input.Value())
+	}
+
+	// Valid command works without agent run
+	chat = newChatModel(context.Background(), nil, inmemory.NewMessageStore(), gogent.NewToolRegistry(), gogent.NewChannelBroadcaster())
+	chat.input.SetValue("/help")
+	updated, cmd = chat.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	chat = updated.(*chatModel)
+	if cmd != nil || chat.status != helpText {
+		t.Fatalf("valid command /help: cmd=%v status=%q", cmd, chat.status)
+	}
+}
