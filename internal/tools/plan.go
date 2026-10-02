@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/cgund98/gogent"
@@ -153,7 +154,15 @@ func insideDir(dir, path string) bool {
 	return rel != "." && !strings.HasPrefix(rel, "..")
 }
 
+// planIgnoreMu serializes the read-modify-write of the workspace .gitignore.
+// write_plan and update_plan both reach it, and gogent runs a turn's tool calls
+// concurrently, so two saves would otherwise each append the ignore line.
+var planIgnoreMu sync.Mutex
+
 func appendPlanIgnore(root string) (bool, error) {
+	planIgnoreMu.Lock()
+	defer planIgnoreMu.Unlock()
+
 	path := filepath.Join(root, ".gitignore")
 	body, err := os.ReadFile(path)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/cgund98/gogent"
 )
@@ -24,6 +25,11 @@ type tasksArgs struct {
 // Tasks patches the session checklist. Agent mode registers it. Ask, Plan, and a delegate child do not.
 type Tasks struct {
 	List *TaskList
+
+	// mu makes the read-modify-write of Execute atomic. TaskList locks each call,
+	// but gogent runs a turn's tool calls concurrently, and two tasks calls that
+	// each snapshot, patch, and apply would otherwise lose one patch.
+	mu sync.Mutex
 }
 
 func (t *Tasks) Name() string { return "tasks" }
@@ -39,6 +45,9 @@ func (t *Tasks) RequiresApproval(context.Context, json.RawMessage) (gogent.Appro
 }
 
 func (t *Tasks) Execute(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	var args tasksArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, fmt.Errorf("parse arguments: %w", err)
